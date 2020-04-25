@@ -539,7 +539,7 @@ static int __init simplefb_init(void)
 	ret = platform_driver_register(&simplefb_driver);
 	if (ret)
 		return ret;
-	
+
 	if (!ret) {
 		simplefb_device = platform_device_alloc("simplefb", 0);
 
