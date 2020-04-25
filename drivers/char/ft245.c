@@ -134,15 +134,14 @@ static char *serial_name = "FT245 serial driver";
  * initialization for the tty structure.
  */
 
-static void rs_poll(unsigned long);
+static void rs_poll(struct timer_list *unused);
 
 static int rs_open(struct tty_struct *tty, struct file * filp)
 {
 	tty->port = &serial_port;
 	spin_lock_bh(&timer_lock);
 	if (tty->count == 1) {
-		setup_timer(&serial_timer, rs_poll,
-				(unsigned long)&serial_port);
+		timer_setup(&serial_timer, rs_poll, 0);
 		mod_timer(&serial_timer, jiffies + SERIAL_TIMER_VALUE);
 	}
 	spin_unlock_bh(&timer_lock);
@@ -216,12 +215,12 @@ static int rs_write(struct tty_struct * tty,
 	return written;
 }
 
-static void rs_poll(unsigned long priv)
+static void rs_poll(struct timer_list *unused)
 {
 	volatile unsigned char *pHaveData = (volatile char *)(BASE_ADDRESS + UART_STATUS_OFFSET);
 	volatile unsigned char *pData = (volatile char *)(BASE_ADDRESS + UART_DATA_OFFSET);
 	
-	struct tty_port *port = (struct tty_port *)priv;
+	struct tty_port *port = &serial_port;
 	int i = 0;
 	int rd = 1;
 	unsigned char c;
