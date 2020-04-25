@@ -144,7 +144,7 @@ extern void paging_init(void);
 static void __init m68k_parse_bootinfo(const struct bi_record *record)
 {
 	save_bootinfo(record);
-	
+
 	//redux
 	m68k_memory[m68k_num_memory].addr = 0x10000000;
 #ifdef CONFIG_REDUX
@@ -156,7 +156,7 @@ static void __init m68k_parse_bootinfo(const struct bi_record *record)
 	m68k_memory[m68k_num_memory].size = 1024 * 1024 * 1024;
 #endif
 
-	
+
 	m68k_num_memory++;
 
 
@@ -293,7 +293,7 @@ void __init setup_arch(char **cmdline_p)
 	default:
 		config_BSP(NULL, 0);
 	}
-	
+
 	mach_power_off = power_off_reset;
 
 	paging_init();
