@@ -2,6 +2,13 @@
 comment "Machine Types"
 
 if M68KCLASSIC
+config REDUX
+	bool "Big Ham REDUX"
+	select MMU_MOTOROLA if MMU
+
+config VM68K
+	bool "m68k VM"
+	select MMU_MOTOROLA if MMU
 
 config AMIGA
 	bool "Amiga support"

@@ -31,6 +31,8 @@ config M68K
 	select OLD_SIGSUSPEND3
 	select OLD_SIGACTION
 	select MMU_GATHER_NO_RANGE if MMU
+	select CLKSRC_MMIO
+	select HAVE_PERF_EVENTS
 
 config CPU_BIG_ENDIAN
 	def_bool y
@@ -69,7 +71,7 @@ config ZONE_DMA
 config HZ
 	int
 	default 1000 if CLEOPATRA
-	default 100
+	default 125
 
 config PGTABLE_LEVELS
 	default 2 if SUN3 || COLDFIRE
@@ -131,7 +133,6 @@ menu "Kernel Features"
 
 endmenu
 
-if !MMU
 menu "Power management options"
 
 config PM
@@ -140,6 +141,5 @@ config PM
 	  Support processor power management modes
 
 endmenu
-endif
 
 source "arch/m68k/Kconfig.devices"
