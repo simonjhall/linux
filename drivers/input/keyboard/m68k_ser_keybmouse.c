@@ -191,7 +191,7 @@ static struct input_dev *atamouse_dev;
 static DEFINE_SPINLOCK(timer_lock);
 static struct timer_list serial_timer;
 
-static void keybmouse_poll(unsigned long priv)
+static void keybmouse_poll(struct timer_list *unused)
 {
 	volatile unsigned int *pVmData = (volatile int *)(BASE_ADDRESS + KEYB_MOUSE_DATA_OFFSET);
 	volatile unsigned char *pRealData = (volatile char *)(BASE_ADDRESS + UART_DATA_OFFSET);
@@ -332,7 +332,7 @@ static int __init atakbd_init(void)
 	
 	spin_lock_bh(&timer_lock);
 	
-	setup_timer(&serial_timer, keybmouse_poll, 0);
+	timer_setup(&serial_timer, keybmouse_poll, 0);
 	mod_timer(&serial_timer, jiffies + SERIAL_TIMER_VALUE);
 	
 	spin_unlock_bh(&timer_lock);

@@ -91,4 +91,4 @@ obj-$(CONFIG_USB_FOTG210_HCD)	+= fotg210-hcd.o
 obj-$(CONFIG_USB_MAX3421_HCD)	+= max3421-hcd.o
 
 #sjh
-obj-$(CONFIG_USB_FT313H_HCD)	+= ft313-hcd.o
+#obj-$(CONFIG_USB_FT313H_HCD)	+= ft313-hcd.o
