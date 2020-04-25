@@ -21,7 +21,11 @@ static inline void flush_tlb_kernel_page(void *addr)
 				     : : "a" (addr));
 		set_fs(old_fs);
 	} else if (CPU_IS_020_OR_030)
+	{
+		//sjh
+		flush_cache_all();
 		__asm__ __volatile__("pflush #4,#4,(%0)" : : "a" (addr));
+	}
 }
 
 /*
@@ -29,6 +33,8 @@ static inline void flush_tlb_kernel_page(void *addr)
  */
 static inline void __flush_tlb(void)
 {
+	//sjh fixme
+	
 	if (CPU_IS_COLDFIRE) {
 		mmu_write(MMUOR, MMUOR_CNL);
 	} else if (CPU_IS_040_OR_060) {
@@ -36,6 +42,7 @@ static inline void __flush_tlb(void)
 				     "pflushan\n\t"
 				     ".chip 68k");
 	} else if (CPU_IS_020_OR_030) {
+		flush_cache_all();
 		__asm__ __volatile__("pflush #0,#4");
 	}
 }
@@ -55,7 +62,10 @@ static inline void __flush_tlb_one(unsigned long addr)
 	else if (CPU_IS_040_OR_060)
 		__flush_tlb040_one(addr);
 	else if (CPU_IS_020_OR_030)
+	{
+		flush_cache_all();
 		__asm__ __volatile__("pflush #0,#4,(%0)" : : "a" (addr));
+	}
 }
 
 #define flush_tlb() __flush_tlb()
@@ -72,6 +82,7 @@ static inline void flush_tlb_all(void)
 				     "pflusha\n\t"
 				     ".chip 68k");
 	} else if (CPU_IS_020_OR_030) {
+		flush_cache_all();
 		__asm__ __volatile__("pflusha");
 	}
 }
