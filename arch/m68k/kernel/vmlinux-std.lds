@@ -30,6 +30,8 @@ SECTIONS
   EXCEPTION_TABLE(16)
 
   _sdata = .;			/* Start of data section */
+  
+  NOTES
 
   RODATA
 
@@ -49,7 +51,6 @@ SECTIONS
 	*(.m68k_fixup)
 	__stop_fixup = .;
   }
-  NOTES
   .init_end : {
 	/* This ALIGN be in a section so that _end is at the end of the
 	   load segment. */
