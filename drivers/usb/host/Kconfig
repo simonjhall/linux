@@ -3,6 +3,15 @@
 #
 comment "USB Host Controller Drivers"
 
+config USB_FT313H_HCD
+	bool "FT313H HCD support"
+	depends on USB
+	---help---
+	  The FT313H chip is a USB 2.0 host controller. Enable this
+	  option if your board has this chip. If unsure, say N.
+
+	  This driver does not support isochronous transfers.
+
 config USB_C67X00_HCD
 	tristate "Cypress C67x00 HCD support"
 	depends on HAS_IOMEM

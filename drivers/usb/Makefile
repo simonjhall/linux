@@ -32,6 +32,9 @@ obj-$(CONFIG_USB_FSL_USB2)	+= host/
 obj-$(CONFIG_USB_FOTG210_HCD)	+= host/
 obj-$(CONFIG_USB_MAX3421_HCD)	+= host/
 
+#sjh
+obj-$(CONFIG_USB_FT313H_HCD)	+= host/
+
 obj-$(CONFIG_USB_C67X00_HCD)	+= c67x00/
 
 obj-$(CONFIG_USB_WUSB)		+= wusbcore/
