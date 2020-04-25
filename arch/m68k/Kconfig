@@ -37,6 +37,8 @@ config M68K
 	select SET_FS
 	select UACCESS_MEMCPY if !MMU
 	select VIRT_TO_BUS
+	select CLKSRC_MMIO
+	select HAVE_PERF_EVENTS
 
 config CPU_BIG_ENDIAN
 	def_bool y
