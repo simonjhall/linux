@@ -61,7 +61,10 @@ void __init init_IRQ(void)
 	for (i = IRQ_AUTO_1; i <= IRQ_AUTO_7; i++)
 		irq_set_chip_and_handler(i, &auto_irq_chip, handle_simple_irq);
 
-	mach_init_IRQ();
+	if (mach_init_IRQ)
+		mach_init_IRQ();
+	else
+		printk("mach_init_IRQ not set\n");
 }
 
 /**

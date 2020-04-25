@@ -65,10 +65,6 @@ endif
 
 config PCI
 	bool "PCI support"
-	depends on M54xx
-	help
-	  Enable the PCI bus. Support for the PCI bus hardware built into the
-	  ColdFire 547x and 548x processors.
 
 if PCI
 source "drivers/pci/Kconfig"

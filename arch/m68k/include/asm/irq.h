@@ -26,6 +26,8 @@
 #define NR_IRQS	24
 #elif defined(CONFIG_HP300)
 #define NR_IRQS	8
+#elif defined(CONFIG_VM68K) || defined(CONFIG_REDUX)
+#define NR_IRQS 8
 #else
 #define NR_IRQS	0
 #endif

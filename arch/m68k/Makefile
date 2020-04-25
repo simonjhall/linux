@@ -37,7 +37,7 @@ endif
 ifndef CONFIG_M68060
 cpuflags-$(CONFIG_M68040)	:= -m68040
 endif
-cpuflags-$(CONFIG_M68030)	:=
+cpuflags-$(CONFIG_M68030)	:= -mnobitfield
 cpuflags-$(CONFIG_M68020)	:=
 cpuflags-$(CONFIG_M68000)	:= -m68000
 cpuflags-$(CONFIG_M5441x)	:= $(call cc-option,-mcpu=54455,-mcfv4e)
@@ -97,6 +97,8 @@ head-$(CONFIG_COLDFIRE)		:= arch/m68k/coldfire/head.o
 core-y				+= arch/m68k/kernel/	arch/m68k/mm/
 libs-y				+= arch/m68k/lib/
 
+core-$(CONFIG_REDUX)		+= arch/m68k/simon/
+core-$(CONFIG_VM68K)		+= arch/m68k/simon/
 core-$(CONFIG_Q40)		+= arch/m68k/q40/
 core-$(CONFIG_AMIGA)		+= arch/m68k/amiga/
 core-$(CONFIG_ATARI)		+= arch/m68k/atari/

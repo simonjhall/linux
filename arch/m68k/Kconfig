@@ -19,7 +19,6 @@ config M68K
 	select GENERIC_STRNCPY_FROM_USER if MMU
 	select GENERIC_STRNLEN_USER if MMU
 	select ARCH_WANT_IPC_PARSE_VERSION
-	select ARCH_USES_GETTIMEOFFSET if MMU && !COLDFIRE
 	select HAVE_FUTEX_CMPXCHG if MMU && FUTEX
 	select HAVE_MOD_ARCH_SPECIFIC
 	select MODULES_USE_ELF_REL
@@ -28,6 +27,8 @@ config M68K
 	select OLD_SIGACTION
 	select DMA_DIRECT_OPS if HAS_DMA
 	select ARCH_DISCARD_MEMBLOCK
+	select CLKSRC_MMIO
+	select HAVE_PERF_EVENTS
 
 config CPU_BIG_ENDIAN
 	def_bool y
@@ -73,7 +74,7 @@ config ZONE_DMA
 config HZ
 	int
 	default 1000 if CLEOPATRA
-	default 100
+	default 125
 
 config PGTABLE_LEVELS
 	default 2 if SUN3 || COLDFIRE
@@ -135,7 +136,6 @@ menu "Kernel Features"
 
 endmenu
 
-if !MMU
 menu "Power management options"
 
 config PM
@@ -144,6 +144,5 @@ config PM
 	  Support processor power management modes
 
 endmenu
-endif
 
 source "arch/m68k/Kconfig.devices"
