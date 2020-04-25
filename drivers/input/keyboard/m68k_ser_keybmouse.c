@@ -196,9 +196,9 @@ static void keybmouse_poll(struct timer_list *unused)
 	volatile unsigned int *pVmData = (volatile int *)(BASE_ADDRESS + KEYB_MOUSE_DATA_OFFSET);
 	volatile unsigned char *pRealData = (volatile char *)(BASE_ADDRESS + UART_DATA_OFFSET);
 	volatile unsigned char *pRealHaveData = (volatile char *)(BASE_ADDRESS + UART_STATUS_OFFSET);
-	
-	spin_lock(&timer_lock);	
-	
+
+	spin_lock(&timer_lock);
+
 	unsigned int d = 0;
 	unsigned char c[4];
 
@@ -210,7 +210,7 @@ static void keybmouse_poll(struct timer_list *unused)
 		{
 			unsigned char scancode = d & 0xff;
 			unsigned int down = (d >> 8) & 1;
-		
+
 			input_report_key(atakbd_dev, scancode, down);
 			input_sync(atakbd_dev);
 		}
@@ -218,13 +218,13 @@ static void keybmouse_poll(struct timer_list *unused)
 		{
 			char relX = (char)(d & 0xff);
 			char relY = (char)((d & 0xff00) >> 8);
-			
+
 			input_report_rel(atamouse_dev, REL_X, relX);
 			input_report_rel(atamouse_dev, REL_Y, relY);
-			
+
 			input_report_key(atamouse_dev, BTN_LEFT, d & (1 << 16));
 			input_report_key(atamouse_dev, BTN_RIGHT, d & (1 << 17));
-	
+
 			input_sync(atamouse_dev);
 		}
 	}
@@ -234,24 +234,24 @@ static void keybmouse_poll(struct timer_list *unused)
 	while (!(*pRealHaveData & (1 << 2)))
 	{
 		c[0] = *pRealData;
-		
+
 		while ((*pRealHaveData & (1 << 2)));
 		c[1] = *pRealData;
-		
+
 		while ((*pRealHaveData & (1 << 2)));
 		c[2] = *pRealData;
-		
+
 		while ((*pRealHaveData & (1 << 2)));
 		c[3] = *pRealData;
-		
+
 		d = (c[0] << 24) | (c[1] << 16) | (c[2] << 8) | (c[3] << 0);
-		
+
 		//keyboard
 		if (d & (1 << 31))
 		{
 			unsigned char scancode = d & 0xff;
 			unsigned int down = (d >> 8) & 1;
-		
+
 			input_report_key(atakbd_dev, scancode, down);
 			input_sync(atakbd_dev);
 		}
@@ -259,18 +259,18 @@ static void keybmouse_poll(struct timer_list *unused)
 		{
 			char relX = (char)(d & 0xff);
 			char relY = (char)((d & 0xff00) >> 8);
-			
+
 			input_report_rel(atamouse_dev, REL_X, relX);
 			input_report_rel(atamouse_dev, REL_Y, relY);
-			
+
 			input_report_key(atamouse_dev, BTN_LEFT, d & (1 << 16));
 			input_report_key(atamouse_dev, BTN_RIGHT, d & (1 << 17));
-	
+
 			input_sync(atamouse_dev);
 		}
 	}
 #endif
-	
+
 	mod_timer(&serial_timer, jiffies + SERIAL_TIMER_VALUE);
 	spin_unlock(&timer_lock);
 }
@@ -305,12 +305,12 @@ static int __init atakbd_init(void)
 		input_free_device(atakbd_dev);
 		return error;
 	}
-	
+
 	///////////////////////////
 	atamouse_dev = input_allocate_device();
 	if (!atamouse_dev)
 		return -ENOMEM;
-		
+
 	atamouse_dev->name = "SDL mouse";
 	atamouse_dev->phys = "sdlmouse/input0";
 	atamouse_dev->id.bustype = BUS_HOST;
@@ -322,19 +322,19 @@ static int __init atakbd_init(void)
 	atamouse_dev->relbit[0] = BIT_MASK(REL_X) | BIT_MASK(REL_Y);
 	atamouse_dev->keybit[BIT_WORD(BTN_LEFT)] = BIT_MASK(BTN_LEFT) |
 		BIT_MASK(BTN_MIDDLE) | BIT_MASK(BTN_RIGHT);
-		
+
 	error = input_register_device(atamouse_dev);
 	if (error) {
 		input_free_device(atamouse_dev);
 		return error;
 	}
 	///////////////////////////
-	
+
 	spin_lock_bh(&timer_lock);
-	
+
 	timer_setup(&serial_timer, keybmouse_poll, 0);
 	mod_timer(&serial_timer, jiffies + SERIAL_TIMER_VALUE);
-	
+
 	spin_unlock_bh(&timer_lock);
 
 	return 0;
