@@ -16,7 +16,9 @@
 #include <linux/types.h>  /* size_t */
 #include <linux/vmalloc.h>
 #include <linux/genhd.h>
+#include <linux/blk_types.h>
 #include <linux/blkdev.h>
+#include <linux/blk-mq.h>
 #include <linux/hdreg.h>
 
 #include <linux/version.h>
@@ -182,18 +184,16 @@ static unsigned long long read_sectors_ft245(unsigned char *pOut, unsigned int l
 #define KERNEL_SECTOR_SIZE 512
 
 /*
-* Our request queue.
-*/
-static struct request_queue *Queue;
-
-/*
 * The internal representation of our device.
 */
+//https://prog.world/linux-kernel-5-0-we-write-simple-block-device-under-blk-mq/
 static struct sbd_device
 {
 	unsigned long long size;
-	spinlock_t lock;
-	//u8 *data;
+	atomic_t open_counter; // How many openers
+
+	struct blk_mq_tag_set tag_set;
+	struct request_queue * queue; // For mutual exclusion
 	struct gendisk *gd;
 } Device;
 
@@ -204,6 +204,7 @@ static void sbd_transfer(struct sbd_device *dev, sector_t sector, unsigned long 
 {
 	unsigned long long offset = sector * LOGICAL_BLOCK_SIZE;
 	unsigned long long nbytes = nsect * LOGICAL_BLOCK_SIZE;
+	int count;
 	
 #ifdef BLOCK_VM
 	volatile unsigned long long *pOffset = (volatile long long *)(BASE_ADDRESS + VM_SEEK_OFFSET);
@@ -223,7 +224,6 @@ static void sbd_transfer(struct sbd_device *dev, sector_t sector, unsigned long 
 		
 		*pOffset = offset;
 		
-		int count;
 		for (count = 0; count < nbytes; count++)
 			*pData = *buffer++;
 	}
@@ -233,7 +233,6 @@ static void sbd_transfer(struct sbd_device *dev, sector_t sector, unsigned long 
 		
 		*pOffset = offset;
 		
-		int count;
 		for (count = 0; count < nbytes; count++)
 			*buffer++ = *pData;
 	}
@@ -287,33 +286,30 @@ static void sbd_transfer(struct sbd_device *dev, sector_t sector, unsigned long 
 #endif
 }
 
-static void sbd_request(struct request_queue *q)
+//static void sbd_transfer(struct sbd_device *dev, sector_t sector, unsigned long long nsect, char *buffer, int write);
+
+static int do_simple_request (struct request * rq, unsigned int * nr_bytes)
 {
-	struct request *req;
+	int ret = 0;
+	struct bio_vec bvec;
+	struct req_iterator iter;
+	struct sbd_device *dev = rq-> q-> queuedata;
 
-	req = blk_fetch_request(q);
-	while (req != NULL)
+	loff_t pos = blk_rq_pos (rq);
+	
+	rq_for_each_segment(bvec, rq, iter)
 	{
-		// blk_fs_request() was removed in 2.6.36 – many thanks to
-		// Christian Paro for the heads up and fix…
-		//if (!blk_fs_request(req)) {
-		/*if (req->cmd_type != REQ_TYPE_FS) {
-		printk (KERN_NOTICE "Skip non-CMD request\n");
-		__blk_end_request_all(req, -EIO);
-		req = blk_fetch_request(q);
-		continue;
-		}*/
+		void* b_buf = page_address(bvec.bv_page) + bvec.bv_offset;
 
-		sbd_transfer(&Device, blk_rq_pos(req),
-			blk_rq_cur_sectors(req),
-			bio_data(req->bio),
-			rq_data_dir(req));
+		BUG_ON(bvec.bv_len & 511);
 
-		if ( ! __blk_end_request_cur(req, 0) )
-		{
-			req = blk_fetch_request(q);
-		}
+		sbd_transfer(dev, pos, bvec.bv_len >> SECTOR_SHIFT, b_buf, rq_data_dir (rq) ? 1 : 0);
+		pos += bvec.bv_len >> SECTOR_SHIFT;
+
+		*nr_bytes += bvec.bv_len;
 	}
+
+	return ret;
 }
 
 /*
@@ -342,48 +338,78 @@ int sbd_getgeo(struct block_device * block_device, struct hd_geometry * geo)
 static struct block_device_operations sbd_ops =
 {
 	.owner = THIS_MODULE,
-	.getgeo = sbd_getgeo
+	.getgeo = sbd_getgeo,
 };
+
+static blk_status_t queue_rq (struct blk_mq_hw_ctx * hctx, const struct blk_mq_queue_data * bd)
+{
+	blk_status_t status = BLK_STS_OK;
+	struct request * rq = bd-> rq;
+
+	blk_mq_start_request (rq);
+
+	// we can't use that thread
+	{
+		unsigned int nr_bytes = 0;
+
+		if (do_simple_request (rq, &nr_bytes) != 0)
+			status = BLK_STS_IOERR;
+
+		//printk (KERN_WARNING "sblkdev: request process% d bytes  n", nr_bytes);
+
+		if (blk_update_request (rq, status, nr_bytes)) // GPL-only symbol
+			BUG ();
+		__blk_mq_end_request (rq, status);
+	}
+
+	return BLK_STS_OK; // always return ok
+}
+
+static struct blk_mq_ops _mq_ops = {
+	.queue_rq = queue_rq,
+};
+
+// types
+typedef struct sblkdev_cmd_s
+{
+    //nothing
+} sblkdev_cmd_t;
 
 static int __init sbd_init(void)
 {
 	/*
 	* Set up our internal device.
 	*/
-	Device.size = nsectors * LOGICAL_BLOCK_SIZE;
-	spin_lock_init(&Device.lock);
-	//Device.data = vmalloc(Device.size);
+	Device.tag_set.cmd_size = sizeof (sblkdev_cmd_t);
+	Device.tag_set.driver_data = &Device;
 
-	//if (Device.data == NULL)
-	//	return -ENOMEM;
-	/*
-	* Get a request queue.
-	*/
-	Queue = blk_init_queue(sbd_request, &Device.lock);
-	if (Queue == NULL)
+	Device.size = nsectors * LOGICAL_BLOCK_SIZE;
+	Device.queue = blk_mq_init_sq_queue (&Device.tag_set, & _mq_ops, 128, BLK_MQ_F_SHOULD_MERGE);
+	if (Device.queue == NULL)
 		goto out;
 	
-	blk_queue_logical_block_size(Queue, LOGICAL_BLOCK_SIZE);
+	Device.queue->queuedata = &Device;
+	
 	/*
 	* Get registered.
 	*/
 	major_num = register_blkdev(major_num, "ham_uart");
 
-	//if (major_num major == major_num)
 	Device.gd = alloc_disk(1);
 	if (!Device.gd)
 		goto out_unregister;
 
+	Device.gd->flags |= GENHD_FL_NO_PART_SCAN;
 	Device.gd->major = major_num;
 	Device.gd->first_minor = 0;
 	Device.gd->fops = &sbd_ops;
 	Device.gd->private_data = &Device;
+	Device.gd->queue = Device.queue;
 
 	strcpy(Device.gd->disk_name, "ham_uart0");
 
 	set_capacity(Device.gd, nsectors);
 
-	Device.gd->queue = Queue;
 	add_disk(Device.gd);
 
 	return 0;
@@ -391,7 +417,6 @@ static int __init sbd_init(void)
 	out_unregister:
 	unregister_blkdev(major_num, "ham_uart");
 	out:
-	//vfree(Device.data);
 
 	return -ENOMEM;
 }
@@ -401,8 +426,7 @@ static void __exit sbd_exit(void)
 	del_gendisk(Device.gd);
 	put_disk(Device.gd);
 	unregister_blkdev(major_num, "ham_uart");
-	blk_cleanup_queue(Queue);
-	//vfree(Device.data);
+	blk_cleanup_queue(Device.queue);
 }
 
 module_init(sbd_init);
