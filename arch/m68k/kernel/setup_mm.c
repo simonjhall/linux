@@ -78,7 +78,9 @@ unsigned long m68k_memoffset;
 struct m68k_mem_info m68k_memory[NUM_MEMINFO];
 EXPORT_SYMBOL(m68k_memory);
 
+#ifdef CONFIG_BLK_DEV_INITRD
 static struct m68k_mem_info m68k_ramdisk __initdata;
+#endif
 
 static char m68k_command_line[CL_SIZE] __initdata;
 
@@ -417,16 +419,20 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 
 	clockfreq = loops_per_jiffy * HZ * clockfactor;
 
-	seq_printf(m, "CPU:\t\t%s\n"
-		   "MMU:\t\t%s\n"
-		   "FPU:\t\t%s\n"
-		   "Clocking:\t%lu.%1lu MHz\n"
-		   "BogoMips:\t%lu.%02lu\n"
-		   "Calibration:\t%lu loops\n",
-		   cpu, mmu, fpu,
-		   clockfreq/1000000,(clockfreq/100000)%10,
-		   loops_per_jiffy/(500000/HZ),(loops_per_jiffy/(5000/HZ))%100,
-		   loops_per_jiffy);
+	seq_printf(m,
+		"processor:\t0\n"
+		"vendor:\tMotorola\n"
+		"model name:\t%s\n"
+		"fpu:\t\t%s\n"
+		"mmu:\t\t%s\n"
+		"cpu MHz:\t%lu.%1lu\n"
+		"bogomips:\t%lu.%02lu\n"
+		"calibration:\t%lu\n",
+		cpu, fpu, mmu,
+		clockfreq/1000000,(clockfreq/100000)%10,
+		loops_per_jiffy/(500000/HZ),(loops_per_jiffy/(5000/HZ))%100,
+		loops_per_jiffy);
+
 	return 0;
 }
 
