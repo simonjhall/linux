@@ -57,10 +57,10 @@ static unsigned long long nsectors = 16 * 1024 * 1024; /* How big the drive is *
 #endif
 
 #ifdef CONFIG_REDUX
-#define BLOCK_CF
+// #define BLOCK_CF
 #endif
 
-//#define BLOCK_FT245
+#define BLOCK_FT245
 
 #define CF_STARTING_SECTOR 135168
 
@@ -85,7 +85,7 @@ struct Cf
 static void cf_wait(void)
 {
 	volatile unsigned char *pStatus = (volatile unsigned char *)(BASE_ADDRESS | 0x51c);
-	
+
 	while (*pStatus & (1 << 7))
 		;
 	while (!(*pStatus & (1 << 6)))
@@ -97,13 +97,13 @@ static unsigned long long read_sector(unsigned char *pOut, unsigned int lba, uns
 	int count, i;
 	volatile struct Cf *pCf = (struct Cf *)(BASE_ADDRESS + CF_DATA_OFFSET);
 	unsigned short *pShortOut = (unsigned short *)pOut;
-	
+
 	unsigned int n;
 	if (num_sects > 255)
 		n = 255;
 	else
 		n = num_sects;
-	
+
 	//printk("read sector %x %x %x %x\n", (lba >> 24) & 0xf, (lba >> 16) & 0xff, (lba >> 8) & 0xff, lba & 0xff);
 
 	//read a sector
@@ -119,7 +119,7 @@ static unsigned long long read_sector(unsigned char *pOut, unsigned int lba, uns
 
 	//printk("wait for idle before write\n");
 	pCf->m_command = 0x20 << 24;
-	
+
 	for (count = 0; count < n; count++)
 	{
 		cf_wait();
@@ -127,53 +127,125 @@ static unsigned long long read_sector(unsigned char *pOut, unsigned int lba, uns
 		for (i = 0; i < 256; i++)
 			*pShortOut++ = pCf->m_data >> 16;
 	}
-	
+
 	return n;
 }
 
-static void ft245_write_byte(unsigned char b)
+static void cf_print_sector(unsigned char *pBuf, unsigned int lba)
 {
-	volatile char *pData = (volatile char *)(BASE_ADDRESS + UART_DATA_OFFSET);
-	volatile char *pState = (volatile char *)(BASE_ADDRESS + UART_STATUS_OFFSET);
-	
-	while (*pState & (1 << 3))			//no space
-		;
+	int x, y;
+	lba = lba * 512;
 
-	*pData = b;
-}
-
-static void ft245_read_bytes(unsigned char *pOut, unsigned int num_bytes)
-{
-	volatile char *pData = (volatile char *)(BASE_ADDRESS + UART_DATA_OFFSET);
-	volatile char *pState = (volatile char *)(BASE_ADDRESS + UART_STATUS_OFFSET);
-	
-	int count;
-	
-	for (count = 0; count < num_bytes; count++)
+	for (x = 0; x < 32; x++)
 	{
-		while (*pState & (1 << 2))			//no data
-			;
-		
-		pOut[count] = *pData;
+		unsigned char *c = &pBuf[x * 16];
+
+		printk("%08x  ", lba + x * 16);
+
+		for (y = 0; y < 16; y++)
+		{
+			printk(KERN_CONT "%02x ", c[y]);
+
+			if (y == 7)
+				printk(KERN_CONT " ");
+		}
+
+		printk(KERN_CONT " |");
+
+		for (y = 0; y < 16; y++)
+		{
+			if (c[y] >= 32 && c[y] < 127)
+				printk(KERN_CONT "%c", c[y]);
+			else
+				printk(KERN_CONT ".");
+		}
+
+		printk(KERN_CONT "|\n");
 	}
 }
 
-static unsigned long long read_sectors_ft245(unsigned char *pOut, unsigned int lba, unsigned long long num_sects)
+// #pragma GCC push_options
+// #pragma GCC optimize ("-O1")
+
+void ft245_write_byte(unsigned char b)
+{
+	volatile char *pData = (volatile char *)(BASE_ADDRESS + UART_DATA_OFFSET);
+	volatile char *pState = (volatile char *)(BASE_ADDRESS + UART_STATUS_OFFSET);
+
+	barrier();
+
+	while (*pState & (1 << 3))			//no space
+	{
+		// __asm__ __volatile__ ("nop");
+		barrier();
+	}
+
+	barrier();
+	// __asm__ __volatile__ ("nop");
+	*pData = b;
+	__asm__ __volatile__ ("nop");
+	barrier();
+}
+
+// # pragma GCC push_options
+// # pragma GCC optimize ("-Os")
+
+void ft245_read_bytes(unsigned char *pOut, unsigned int num_bytes)
+{
+	volatile char *pData = (volatile char *)(BASE_ADDRESS + UART_DATA_OFFSET);
+	volatile char *pState = (volatile char *)(BASE_ADDRESS + UART_STATUS_OFFSET);
+
+	int count;
+
+	for (count = 0; count < num_bytes; count++)
+	{
+		barrier();
+		while (*pState & (1 << 2))			//no data
+		{
+			__asm__ __volatile__ ("nop");
+			barrier();
+		}
+
+		barrier();
+		pOut[count] = *pData;
+		barrier();
+	}
+}
+
+static DEFINE_SPINLOCK(ft245_lock);
+
+unsigned long long read_sectors_ft245(unsigned char *pOut, unsigned int lba, unsigned long long num_sects)
 {
 	unsigned int n;
+	unsigned int count;
+
+	unsigned long flags;
+	// printk("s");
+	spin_lock_irqsave(&ft245_lock, flags);
+
 	if (num_sects > 255)
 		n = 255;
 	else
 		n = num_sects;
-	
+
+	// printk(KERN_CONT "0");
 	ft245_write_byte(n);
+	// printk(KERN_CONT "1");
 	ft245_write_byte(lba & 0xff);
+	// printk(KERN_CONT "2");
 	ft245_write_byte((lba >> 8) & 0xff);
+	// printk(KERN_CONT "3");
 	ft245_write_byte((lba >> 16) & 0xff);
+	// printk(KERN_CONT "4");
 	ft245_write_byte((lba >> 24) & 0xf);
-	
+	// printk(KERN_CONT "r\n");
+
 	ft245_read_bytes(pOut, 512 * n);
-	
+	// for (count = 0; count < n; count++)
+	// 	cf_print_sector(&pOut[512 * count], lba + count);
+
+	spin_unlock_irqrestore(&ft245_lock, flags);
+
 	return n;
 }
 
@@ -205,7 +277,7 @@ static void sbd_transfer(struct sbd_device *dev, sector_t sector, unsigned long 
 	unsigned long long offset = sector * LOGICAL_BLOCK_SIZE;
 	unsigned long long nbytes = nsect * LOGICAL_BLOCK_SIZE;
 	int count;
-	
+
 #ifdef BLOCK_VM
 	volatile unsigned long long *pOffset = (volatile long long *)(BASE_ADDRESS + VM_SEEK_OFFSET);
 	volatile char *pData = (volatile char *)(BASE_ADDRESS + VM_DATA_OFFSET);
@@ -216,30 +288,30 @@ static void sbd_transfer(struct sbd_device *dev, sector_t sector, unsigned long 
 			offset, nbytes, dev->size);
 		return;
 	}
-	
+
 	//fake vm
 	if (write)
 	{
 		//printk("WRITE of %lld bytes at offset %lld\n", nbytes, offset);
-		
+
 		*pOffset = offset;
-		
+
 		for (count = 0; count < nbytes; count++)
 			*pData = *buffer++;
 	}
 	else
 	{
 		//printk("READ of %ld bytes from offset %ld\n", nbytes, offset);
-		
+
 		*pOffset = offset;
-		
+
 		for (count = 0; count < nbytes; count++)
 			*buffer++ = *pData;
 	}
 #endif
 
 #ifdef BLOCK_CF
-	
+
 	//cf
 	if (write)
 	{
@@ -253,11 +325,11 @@ static void sbd_transfer(struct sbd_device *dev, sector_t sector, unsigned long 
 			unsigned char *p = (unsigned char *)buffer + count * LOGICAL_BLOCK_SIZE;
 			read_sector(p, sector + count + CF_STARTING_SECTOR);
 		}*/
-		
+
 		while (nsect)
 		{
 			unsigned long long r = read_sector(buffer, sector + CF_STARTING_SECTOR, nsect);
-			
+
 			nsect -= r;
 			sector += r;
 			buffer += r * LOGICAL_BLOCK_SIZE;
@@ -268,21 +340,23 @@ static void sbd_transfer(struct sbd_device *dev, sector_t sector, unsigned long 
 #ifdef BLOCK_FT245
 	if (write)
 	{
-		printk("WRITE of %lld bytes at offset %lld\n", nbytes, offset);
+		// printk("WRITE of %lld bytes at offset %lld\n", nbytes, offset);
 	}
 	else
 	{
-		printk("READ of %lld bytes at offset %lld\n", nbytes, offset);
+		// printk("READ of %lld bytes at offset %lld\n", nbytes, offset);
 
 		while (nsect)
 		{
 			unsigned long long r = read_sectors_ft245(buffer, sector, nsect);
-			
+
 			nsect -= r;
 			sector += r;
 			buffer += r * LOGICAL_BLOCK_SIZE;
 		}
+
 	}
+	// printk("transfer finished\n");
 #endif
 }
 
@@ -296,7 +370,7 @@ static int do_simple_request (struct request * rq, unsigned int * nr_bytes)
 	struct sbd_device *dev = rq-> q-> queuedata;
 
 	loff_t pos = blk_rq_pos (rq);
-	
+
 	rq_for_each_segment(bvec, rq, iter)
 	{
 		void* b_buf = page_address(bvec.bv_page) + bvec.bv_offset;
@@ -387,9 +461,9 @@ static int __init sbd_init(void)
 	Device.queue = blk_mq_init_sq_queue (&Device.tag_set, & _mq_ops, 128, BLK_MQ_F_SHOULD_MERGE);
 	if (Device.queue == NULL)
 		goto out;
-	
+
 	Device.queue->queuedata = &Device;
-	
+
 	/*
 	* Get registered.
 	*/

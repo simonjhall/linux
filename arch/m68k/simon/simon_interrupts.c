@@ -5,6 +5,8 @@
 #include <linux/irq.h>
 #include <linux/clocksource.h>
 #include <linux/rtc.h>
+#include <linux/i2c.h>
+#include <linux/platform_device.h>
 #include <asm/setup.h>
 #include <asm/pgtable.h>
 #include <asm/machdep.h>
@@ -33,3 +35,31 @@ void __init config_BSP(char *command, int len)
         mach_sched_init = hw_timer_init;
 }
 
+static struct platform_device rtc_device = {
+	.name	= "rtc-ds1307",
+	.id	= -1,
+};
+
+static struct i2c_board_info simon_i2c_info[] __initdata = {
+	{
+		I2C_BOARD_INFO("ds3231", 0x68),
+	},
+};
+
+static struct platform_device *simon_devices[] __initdata = {
+	&rtc_device,
+};
+
+static int __init init_simon(void)
+{
+#ifdef CONFIG_REDUX
+	/* Add i2c RTC Dallas chip supprt */
+	i2c_register_board_info(0, simon_i2c_info,
+				ARRAY_SIZE(simon_i2c_info));
+
+	platform_add_devices(simon_devices, ARRAY_SIZE(simon_devices));
+#endif
+	return 0;
+}
+
+arch_initcall(init_simon);
