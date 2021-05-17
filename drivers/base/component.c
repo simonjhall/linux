@@ -65,7 +65,6 @@ struct master {
 	const struct component_master_ops *ops;
 	struct device *dev;
 	struct component_match *match;
-	struct dentry *dentry;
 };
 
 struct component {
@@ -125,15 +124,13 @@ core_initcall(component_debug_init);
 
 static void component_master_debugfs_add(struct master *m)
 {
-	m->dentry = debugfs_create_file(dev_name(m->dev), 0444,
-					component_debugfs_dir,
-					m, &component_devices_fops);
+	debugfs_create_file(dev_name(m->dev), 0444, component_debugfs_dir, m,
+			    &component_devices_fops);
 }
 
 static void component_master_debugfs_del(struct master *m)
 {
-	debugfs_remove(m->dentry);
-	m->dentry = NULL;
+	debugfs_remove(debugfs_lookup(dev_name(m->dev), component_debugfs_dir));
 }
 
 #else
@@ -256,7 +253,8 @@ static int try_to_bring_up_master(struct master *master,
 	ret = master->ops->bind(master->dev);
 	if (ret < 0) {
 		devres_release_group(master->dev, NULL);
-		dev_info(master->dev, "master bind failed: %d\n", ret);
+		if (ret != -EPROBE_DEFER)
+			dev_info(master->dev, "master bind failed: %d\n", ret);
 		return ret;
 	}
 
@@ -611,8 +609,9 @@ static int component_bind(struct component *component, struct master *master,
 		devres_release_group(component->dev, NULL);
 		devres_release_group(master->dev, NULL);
 
-		dev_err(master->dev, "failed to bind %s (ops %ps): %d\n",
-			dev_name(component->dev), component->ops, ret);
+		if (ret != -EPROBE_DEFER)
+			dev_err(master->dev, "failed to bind %s (ops %ps): %d\n",
+				dev_name(component->dev), component->ops, ret);
 	}
 
 	return ret;

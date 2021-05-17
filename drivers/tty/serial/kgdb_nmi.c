@@ -50,7 +50,7 @@ static int kgdb_nmi_console_setup(struct console *co, char *options)
 	 * I/O utilities that messages sent to the console will automatically
 	 * be displayed on the dbg_io.
 	 */
-	dbg_io_ops->is_console = true;
+	dbg_io_ops->cons = co;
 
 	return 0;
 }
@@ -373,9 +373,7 @@ int kgdb_unregister_nmi_console(void)
 	if (ret)
 		return ret;
 
-	ret = tty_unregister_driver(kgdb_nmi_tty_driver);
-	if (ret)
-		return ret;
+	tty_unregister_driver(kgdb_nmi_tty_driver);
 	put_tty_driver(kgdb_nmi_tty_driver);
 
 	return 0;

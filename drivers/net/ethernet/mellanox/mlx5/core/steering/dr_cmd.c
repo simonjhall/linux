@@ -18,7 +18,7 @@ int mlx5dr_cmd_query_esw_vport_context(struct mlx5_core_dev *mdev,
 	MLX5_SET(query_esw_vport_context_in, in, other_vport, other_vport);
 	MLX5_SET(query_esw_vport_context_in, in, vport_number, vport_number);
 
-	err = mlx5_cmd_exec(mdev, in, sizeof(in), out, sizeof(out));
+	err = mlx5_cmd_exec_inout(mdev, query_esw_vport_context, in, out);
 	if (err)
 		return err;
 
@@ -51,7 +51,7 @@ int mlx5dr_cmd_query_gvmi(struct mlx5_core_dev *mdev, bool other_vport,
 		 MLX5_SET_HCA_CAP_OP_MOD_GENERAL_DEVICE << 1 |
 		 HCA_CAP_OPMOD_GET_CUR);
 
-	err = mlx5_cmd_exec(mdev, in, sizeof(in), out, out_size);
+	err = mlx5_cmd_exec_inout(mdev, query_hca_cap, in, out);
 	if (err) {
 		kfree(out);
 		return err;
@@ -78,32 +78,99 @@ int mlx5dr_cmd_query_esw_caps(struct mlx5_core_dev *mdev,
 	caps->uplink_icm_address_tx =
 		MLX5_CAP64_ESW_FLOWTABLE(mdev,
 					 sw_steering_uplink_icm_address_tx);
-	caps->sw_owner =
-		MLX5_CAP_ESW_FLOWTABLE_FDB(mdev,
-					   sw_owner);
+	caps->sw_owner_v2 = MLX5_CAP_ESW_FLOWTABLE_FDB(mdev, sw_owner_v2);
+	if (!caps->sw_owner_v2)
+		caps->sw_owner = MLX5_CAP_ESW_FLOWTABLE_FDB(mdev, sw_owner);
 
+	return 0;
+}
+
+static int dr_cmd_query_nic_vport_roce_en(struct mlx5_core_dev *mdev,
+					  u16 vport, bool *roce_en)
+{
+	u32 out[MLX5_ST_SZ_DW(query_nic_vport_context_out)] = {};
+	u32 in[MLX5_ST_SZ_DW(query_nic_vport_context_in)] = {};
+	int err;
+
+	MLX5_SET(query_nic_vport_context_in, in, opcode,
+		 MLX5_CMD_OP_QUERY_NIC_VPORT_CONTEXT);
+	MLX5_SET(query_nic_vport_context_in, in, vport_number, vport);
+	MLX5_SET(query_nic_vport_context_in, in, other_vport, !!vport);
+
+	err = mlx5_cmd_exec(mdev, in, sizeof(in), out, sizeof(out));
+	if (err)
+		return err;
+
+	*roce_en = MLX5_GET(query_nic_vport_context_out, out,
+			    nic_vport_context.roce_en);
 	return 0;
 }
 
 int mlx5dr_cmd_query_device(struct mlx5_core_dev *mdev,
 			    struct mlx5dr_cmd_caps *caps)
 {
+	bool roce_en;
+	int err;
+
 	caps->prio_tag_required	= MLX5_CAP_GEN(mdev, prio_tag_required);
 	caps->eswitch_manager	= MLX5_CAP_GEN(mdev, eswitch_manager);
 	caps->gvmi		= MLX5_CAP_GEN(mdev, vhca_id);
 	caps->flex_protocols	= MLX5_CAP_GEN(mdev, flex_parser_protocols);
+	caps->sw_format_ver	= MLX5_CAP_GEN(mdev, steering_format_version);
 
-	if (mlx5dr_matcher_supp_flex_parser_icmp_v4(caps)) {
+	if (MLX5_CAP_GEN(mdev, roce)) {
+		err = dr_cmd_query_nic_vport_roce_en(mdev, 0, &roce_en);
+		if (err)
+			return err;
+
+		caps->roce_caps.roce_en = roce_en;
+		caps->roce_caps.fl_rc_qp_when_roce_disabled =
+			MLX5_CAP_ROCE(mdev, fl_rc_qp_when_roce_disabled);
+		caps->roce_caps.fl_rc_qp_when_roce_enabled =
+			MLX5_CAP_ROCE(mdev, fl_rc_qp_when_roce_enabled);
+	}
+
+	caps->isolate_vl_tc = MLX5_CAP_GEN(mdev, isolate_vl_tc_new);
+
+	if (caps->flex_protocols & MLX5_FLEX_PARSER_ICMP_V4_ENABLED) {
 		caps->flex_parser_id_icmp_dw0 = MLX5_CAP_GEN(mdev, flex_parser_id_icmp_dw0);
 		caps->flex_parser_id_icmp_dw1 = MLX5_CAP_GEN(mdev, flex_parser_id_icmp_dw1);
 	}
 
-	if (mlx5dr_matcher_supp_flex_parser_icmp_v6(caps)) {
+	if (caps->flex_protocols & MLX5_FLEX_PARSER_ICMP_V6_ENABLED) {
 		caps->flex_parser_id_icmpv6_dw0 =
 			MLX5_CAP_GEN(mdev, flex_parser_id_icmpv6_dw0);
 		caps->flex_parser_id_icmpv6_dw1 =
 			MLX5_CAP_GEN(mdev, flex_parser_id_icmpv6_dw1);
 	}
+
+	if (caps->flex_protocols & MLX5_FLEX_PARSER_GENEVE_TLV_OPTION_0_ENABLED)
+		caps->flex_parser_id_geneve_tlv_option_0 =
+			MLX5_CAP_GEN(mdev, flex_parser_id_geneve_tlv_option_0);
+
+	if (caps->flex_protocols & MLX5_FLEX_PARSER_MPLS_OVER_GRE_ENABLED)
+		caps->flex_parser_id_mpls_over_gre =
+			MLX5_CAP_GEN(mdev, flex_parser_id_outer_first_mpls_over_gre);
+
+	if (caps->flex_protocols & mlx5_FLEX_PARSER_MPLS_OVER_UDP_ENABLED)
+		caps->flex_parser_id_mpls_over_udp =
+			MLX5_CAP_GEN(mdev, flex_parser_id_outer_first_mpls_over_udp_label);
+
+	if (caps->flex_protocols & MLX5_FLEX_PARSER_GTPU_DW_0_ENABLED)
+		caps->flex_parser_id_gtpu_dw_0 =
+			MLX5_CAP_GEN(mdev, flex_parser_id_gtpu_dw_0);
+
+	if (caps->flex_protocols & MLX5_FLEX_PARSER_GTPU_TEID_ENABLED)
+		caps->flex_parser_id_gtpu_teid =
+			MLX5_CAP_GEN(mdev, flex_parser_id_gtpu_teid);
+
+	if (caps->flex_protocols & MLX5_FLEX_PARSER_GTPU_DW_2_ENABLED)
+		caps->flex_parser_id_gtpu_dw_2 =
+			MLX5_CAP_GEN(mdev, flex_parser_id_gtpu_dw_2);
+
+	if (caps->flex_protocols & MLX5_FLEX_PARSER_GTPU_FIRST_EXT_DW_0_ENABLED)
+		caps->flex_parser_id_gtpu_first_ext_dw_0 =
+			MLX5_CAP_GEN(mdev, flex_parser_id_gtpu_first_ext_dw_0);
 
 	caps->nic_rx_drop_address =
 		MLX5_CAP64_FLOWTABLE(mdev, sw_steering_nic_rx_action_drop_icm_address);
@@ -112,10 +179,15 @@ int mlx5dr_cmd_query_device(struct mlx5_core_dev *mdev,
 	caps->nic_tx_allow_address =
 		MLX5_CAP64_FLOWTABLE(mdev, sw_steering_nic_tx_action_allow_icm_address);
 
-	caps->rx_sw_owner = MLX5_CAP_FLOWTABLE_NIC_RX(mdev, sw_owner);
-	caps->max_ft_level = MLX5_CAP_FLOWTABLE_NIC_RX(mdev, max_ft_level);
+	caps->rx_sw_owner_v2 = MLX5_CAP_FLOWTABLE_NIC_RX(mdev, sw_owner_v2);
+	caps->tx_sw_owner_v2 = MLX5_CAP_FLOWTABLE_NIC_TX(mdev, sw_owner_v2);
 
-	caps->tx_sw_owner = MLX5_CAP_FLOWTABLE_NIC_TX(mdev, sw_owner);
+	if (!caps->rx_sw_owner_v2)
+		caps->rx_sw_owner = MLX5_CAP_FLOWTABLE_NIC_RX(mdev, sw_owner);
+	if (!caps->tx_sw_owner_v2)
+		caps->tx_sw_owner = MLX5_CAP_FLOWTABLE_NIC_TX(mdev, sw_owner);
+
+	caps->max_ft_level = MLX5_CAP_FLOWTABLE_NIC_RX(mdev, max_ft_level);
 
 	caps->log_icm_size = MLX5_CAP_DEV_MEM(mdev, log_steering_sw_icm_size);
 	caps->hdr_modify_icm_addr =
@@ -141,7 +213,7 @@ int mlx5dr_cmd_query_flow_table(struct mlx5_core_dev *dev,
 	MLX5_SET(query_flow_table_in, in, table_type, type);
 	MLX5_SET(query_flow_table_in, in, table_id, table_id);
 
-	err = mlx5_cmd_exec(dev, in, sizeof(in), out, sizeof(out));
+	err = mlx5_cmd_exec_inout(dev, query_flow_table, in, out);
 	if (err)
 		return err;
 
@@ -158,12 +230,11 @@ int mlx5dr_cmd_query_flow_table(struct mlx5_core_dev *dev,
 
 int mlx5dr_cmd_sync_steering(struct mlx5_core_dev *mdev)
 {
-	u32 out[MLX5_ST_SZ_DW(sync_steering_out)] = {};
 	u32 in[MLX5_ST_SZ_DW(sync_steering_in)] = {};
 
 	MLX5_SET(sync_steering_in, in, opcode, MLX5_CMD_OP_SYNC_STEERING);
 
-	return mlx5_cmd_exec(mdev, in, sizeof(in), out, sizeof(out));
+	return mlx5_cmd_exec_in(mdev, sync_steering, in);
 }
 
 int mlx5dr_cmd_set_fte_modify_and_vport(struct mlx5_core_dev *mdev,
@@ -214,14 +285,13 @@ int mlx5dr_cmd_del_flow_table_entry(struct mlx5_core_dev *mdev,
 				    u32 table_type,
 				    u32 table_id)
 {
-	u32 out[MLX5_ST_SZ_DW(delete_fte_out)] = {};
 	u32 in[MLX5_ST_SZ_DW(delete_fte_in)] = {};
 
 	MLX5_SET(delete_fte_in, in, opcode, MLX5_CMD_OP_DELETE_FLOW_TABLE_ENTRY);
 	MLX5_SET(delete_fte_in, in, table_type, table_type);
 	MLX5_SET(delete_fte_in, in, table_id, table_id);
 
-	return mlx5_cmd_exec(mdev, in, sizeof(in), out, sizeof(out));
+	return mlx5_cmd_exec_in(mdev, delete_fte, in);
 }
 
 int mlx5dr_cmd_alloc_modify_header(struct mlx5_core_dev *mdev,
@@ -263,7 +333,6 @@ out:
 int mlx5dr_cmd_dealloc_modify_header(struct mlx5_core_dev *mdev,
 				     u32 modify_header_id)
 {
-	u32 out[MLX5_ST_SZ_DW(dealloc_modify_header_context_out)] = {};
 	u32 in[MLX5_ST_SZ_DW(dealloc_modify_header_context_in)] = {};
 
 	MLX5_SET(dealloc_modify_header_context_in, in, opcode,
@@ -271,7 +340,7 @@ int mlx5dr_cmd_dealloc_modify_header(struct mlx5_core_dev *mdev,
 	MLX5_SET(dealloc_modify_header_context_in, in, modify_header_id,
 		 modify_header_id);
 
-	return mlx5_cmd_exec(mdev, in, sizeof(in), out, sizeof(out));
+	return mlx5_cmd_exec_in(mdev, dealloc_modify_header_context, in);
 }
 
 int mlx5dr_cmd_create_empty_flow_group(struct mlx5_core_dev *mdev,
@@ -284,7 +353,7 @@ int mlx5dr_cmd_create_empty_flow_group(struct mlx5_core_dev *mdev,
 	u32 *in;
 	int err;
 
-	in = kzalloc(inlen, GFP_KERNEL);
+	in = kvzalloc(inlen, GFP_KERNEL);
 	if (!in)
 		return -ENOMEM;
 
@@ -292,14 +361,14 @@ int mlx5dr_cmd_create_empty_flow_group(struct mlx5_core_dev *mdev,
 	MLX5_SET(create_flow_group_in, in, table_type, table_type);
 	MLX5_SET(create_flow_group_in, in, table_id, table_id);
 
-	err = mlx5_cmd_exec(mdev, in, inlen, out, sizeof(out));
+	err = mlx5_cmd_exec_inout(mdev, create_flow_group, in, out);
 	if (err)
 		goto out;
 
 	*group_id = MLX5_GET(create_flow_group_out, out, group_id);
 
 out:
-	kfree(in);
+	kvfree(in);
 	return err;
 }
 
@@ -309,14 +378,14 @@ int mlx5dr_cmd_destroy_flow_group(struct mlx5_core_dev *mdev,
 				  u32 group_id)
 {
 	u32 in[MLX5_ST_SZ_DW(destroy_flow_group_in)] = {};
-	u32 out[MLX5_ST_SZ_DW(destroy_flow_group_out)] = {};
 
-	MLX5_SET(create_flow_group_in, in, opcode, MLX5_CMD_OP_DESTROY_FLOW_GROUP);
+	MLX5_SET(destroy_flow_group_in, in, opcode,
+		 MLX5_CMD_OP_DESTROY_FLOW_GROUP);
 	MLX5_SET(destroy_flow_group_in, in, table_type, table_type);
 	MLX5_SET(destroy_flow_group_in, in, table_id, table_id);
 	MLX5_SET(destroy_flow_group_in, in, group_id, group_id);
 
-	return mlx5_cmd_exec(mdev, in, sizeof(in), out, sizeof(out));
+	return mlx5_cmd_exec_in(mdev, destroy_flow_group, in);
 }
 
 int mlx5dr_cmd_create_flow_table(struct mlx5_core_dev *mdev,
@@ -360,7 +429,7 @@ int mlx5dr_cmd_create_flow_table(struct mlx5_core_dev *mdev,
 	MLX5_SET(create_flow_table_in, in, flow_table_context.reformat_en,
 		 attr->reformat_en);
 
-	err = mlx5_cmd_exec(mdev, in, sizeof(in), out, sizeof(out));
+	err = mlx5_cmd_exec_inout(mdev, create_flow_table, in, out);
 	if (err)
 		return err;
 
@@ -379,7 +448,6 @@ int mlx5dr_cmd_destroy_flow_table(struct mlx5_core_dev *mdev,
 				  u32 table_id,
 				  u32 table_type)
 {
-	u32 out[MLX5_ST_SZ_DW(destroy_flow_table_out)] = {};
 	u32 in[MLX5_ST_SZ_DW(destroy_flow_table_in)] = {};
 
 	MLX5_SET(destroy_flow_table_in, in, opcode,
@@ -387,7 +455,7 @@ int mlx5dr_cmd_destroy_flow_table(struct mlx5_core_dev *mdev,
 	MLX5_SET(destroy_flow_table_in, in, table_type, table_type);
 	MLX5_SET(destroy_flow_table_in, in, table_id, table_id);
 
-	return mlx5_cmd_exec(mdev, in, sizeof(in), out, sizeof(out));
+	return mlx5_cmd_exec_in(mdev, destroy_flow_table, in);
 }
 
 int mlx5dr_cmd_create_reformat_ctx(struct mlx5_core_dev *mdev,
@@ -434,7 +502,6 @@ int mlx5dr_cmd_create_reformat_ctx(struct mlx5_core_dev *mdev,
 void mlx5dr_cmd_destroy_reformat_ctx(struct mlx5_core_dev *mdev,
 				     u32 reformat_id)
 {
-	u32 out[MLX5_ST_SZ_DW(dealloc_packet_reformat_context_out)] = {};
 	u32 in[MLX5_ST_SZ_DW(dealloc_packet_reformat_context_in)] = {};
 
 	MLX5_SET(dealloc_packet_reformat_context_in, in, opcode,
@@ -442,7 +509,7 @@ void mlx5dr_cmd_destroy_reformat_ctx(struct mlx5_core_dev *mdev,
 	MLX5_SET(dealloc_packet_reformat_context_in, in, packet_reformat_id,
 		 reformat_id);
 
-	mlx5_cmd_exec(mdev, in, sizeof(in), out, sizeof(out));
+	mlx5_cmd_exec_in(mdev, dealloc_packet_reformat_context, in);
 }
 
 int mlx5dr_cmd_query_gid(struct mlx5_core_dev *mdev, u8 vhca_port_num,
@@ -458,7 +525,7 @@ int mlx5dr_cmd_query_gid(struct mlx5_core_dev *mdev, u8 vhca_port_num,
 	MLX5_SET(query_roce_address_in, in, roce_address_index, index);
 	MLX5_SET(query_roce_address_in, in, vhca_port_num, vhca_port_num);
 
-	err = mlx5_cmd_exec(mdev, in, sizeof(in), out, sizeof(out));
+	err = mlx5_cmd_exec_inout(mdev, query_roce_address, in, out);
 	if (err)
 		return err;
 

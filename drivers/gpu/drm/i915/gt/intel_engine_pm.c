@@ -1,71 +1,88 @@
+// SPDX-License-Identifier: MIT
 /*
- * SPDX-License-Identifier: MIT
- *
  * Copyright © 2019 Intel Corporation
  */
 
 #include "i915_drv.h"
 
+#include "intel_breadcrumbs.h"
 #include "intel_context.h"
 #include "intel_engine.h"
 #include "intel_engine_heartbeat.h"
 #include "intel_engine_pm.h"
-#include "intel_engine_pool.h"
 #include "intel_gt.h"
 #include "intel_gt_pm.h"
 #include "intel_rc6.h"
 #include "intel_ring.h"
+#include "shmem_utils.h"
+
+static void dbg_poison_ce(struct intel_context *ce)
+{
+	if (!IS_ENABLED(CONFIG_DRM_I915_DEBUG_GEM))
+		return;
+
+	if (ce->state) {
+		struct drm_i915_gem_object *obj = ce->state->obj;
+		int type = i915_coherent_map_type(ce->engine->i915);
+		void *map;
+
+		if (!i915_gem_object_trylock(obj))
+			return;
+
+		map = i915_gem_object_pin_map(obj, type);
+		if (!IS_ERR(map)) {
+			memset(map, CONTEXT_REDZONE, obj->base.size);
+			i915_gem_object_flush_map(obj);
+			i915_gem_object_unpin_map(obj);
+		}
+		i915_gem_object_unlock(obj);
+	}
+}
 
 static int __engine_unpark(struct intel_wakeref *wf)
 {
 	struct intel_engine_cs *engine =
 		container_of(wf, typeof(*engine), wakeref);
 	struct intel_context *ce;
-	void *map;
 
 	ENGINE_TRACE(engine, "\n");
 
 	intel_gt_pm_get(engine->gt);
-
-	/* Pin the default state for fast resets from atomic context. */
-	map = NULL;
-	if (engine->default_state)
-		map = i915_gem_object_pin_map(engine->default_state,
-					      I915_MAP_WB);
-	if (!IS_ERR_OR_NULL(map))
-		engine->pinned_default_state = map;
 
 	/* Discard stale context state from across idling */
 	ce = engine->kernel_context;
 	if (ce) {
 		GEM_BUG_ON(test_bit(CONTEXT_VALID_BIT, &ce->flags));
 
+		/* Flush all pending HW writes before we touch the context */
+		while (unlikely(intel_context_inflight(ce)))
+			intel_engine_flush_submission(engine);
+
 		/* First poison the image to verify we never fully trust it */
-		if (IS_ENABLED(CONFIG_DRM_I915_DEBUG_GEM) && ce->state) {
-			struct drm_i915_gem_object *obj = ce->state->obj;
-			int type = i915_coherent_map_type(engine->i915);
+		dbg_poison_ce(ce);
 
-			map = i915_gem_object_pin_map(obj, type);
-			if (!IS_ERR(map)) {
-				memset(map, CONTEXT_REDZONE, obj->base.size);
-				i915_gem_object_flush_map(obj);
-				i915_gem_object_unpin_map(obj);
-			}
-		}
-
+		/* Scrub the context image after our loss of control */
 		ce->ops->reset(ce);
+
+		CE_TRACE(ce, "reset { seqno:%x, *hwsp:%x, ring:%x }\n",
+			 ce->timeline->seqno,
+			 READ_ONCE(*ce->timeline->hwsp_seqno),
+			 ce->ring->emit);
+		GEM_BUG_ON(ce->timeline->seqno !=
+			   READ_ONCE(*ce->timeline->hwsp_seqno));
 	}
 
 	if (engine->unpark)
 		engine->unpark(engine);
 
+	intel_breadcrumbs_unpark(engine->breadcrumbs);
 	intel_engine_unpark_heartbeat(engine);
 	return 0;
 }
 
 #if IS_ENABLED(CONFIG_LOCKDEP)
 
-static inline unsigned long __timeline_mark_lock(struct intel_context *ce)
+static unsigned long __timeline_mark_lock(struct intel_context *ce)
 {
 	unsigned long flags;
 
@@ -75,8 +92,8 @@ static inline unsigned long __timeline_mark_lock(struct intel_context *ce)
 	return flags;
 }
 
-static inline void __timeline_mark_unlock(struct intel_context *ce,
-					  unsigned long flags)
+static void __timeline_mark_unlock(struct intel_context *ce,
+				   unsigned long flags)
 {
 	mutex_release(&ce->timeline->mutex.dep_map, _THIS_IP_);
 	local_irq_restore(flags);
@@ -84,13 +101,13 @@ static inline void __timeline_mark_unlock(struct intel_context *ce,
 
 #else
 
-static inline unsigned long __timeline_mark_lock(struct intel_context *ce)
+static unsigned long __timeline_mark_lock(struct intel_context *ce)
 {
 	return 0;
 }
 
-static inline void __timeline_mark_unlock(struct intel_context *ce,
-					  unsigned long flags)
+static void __timeline_mark_unlock(struct intel_context *ce,
+				   unsigned long flags)
 {
 }
 
@@ -130,7 +147,7 @@ __queue_and_release_pm(struct i915_request *rq,
 		list_add_tail(&tl->link, &timelines->active_list);
 
 	/* Hand the request over to HW and so engine_retire() */
-	__i915_request_queue(rq, NULL);
+	__i915_request_queue_bh(rq);
 
 	/* Let new submissions commence (and maybe retire this timeline) */
 	__intel_wakeref_defer_park(&engine->wakeref);
@@ -150,6 +167,7 @@ static bool switch_to_kernel_context(struct intel_engine_cs *engine)
 		return true;
 
 	GEM_BUG_ON(!intel_context_is_barrier(ce));
+	GEM_BUG_ON(ce->timeline->hwsp_ggtt != engine->status_page.vma);
 
 	/* Already inside the kernel context, safe to power down. */
 	if (engine->wakeref_serial == engine->serial)
@@ -181,7 +199,7 @@ static bool switch_to_kernel_context(struct intel_engine_cs *engine)
 	 * Ergo, if we put ourselves on the timelines.active_list
 	 * (se intel_timeline_enter()) before we increment the
 	 * engine->wakeref.count, we may see the request completion and retire
-	 * it causing an undeflow of the engine->wakeref.
+	 * it causing an underflow of the engine->wakeref.
 	 */
 	flags = __timeline_mark_lock(ce);
 	GEM_BUG_ON(atomic_read(&ce->timeline->active_count) < 0);
@@ -254,19 +272,13 @@ static int __engine_park(struct intel_wakeref *wf)
 	call_idle_barriers(engine); /* cleanup after wedging */
 
 	intel_engine_park_heartbeat(engine);
-	intel_engine_disarm_breadcrumbs(engine);
-	intel_engine_pool_park(&engine->pool);
+	intel_breadcrumbs_park(engine->breadcrumbs);
 
 	/* Must be reset upon idling, or we may miss the busy wakeup. */
 	GEM_BUG_ON(engine->execlists.queue_priority_hint != INT_MIN);
 
 	if (engine->park)
 		engine->park(engine);
-
-	if (engine->pinned_default_state) {
-		i915_gem_object_unpin_map(engine->default_state);
-		engine->pinned_default_state = NULL;
-	}
 
 	engine->execlists.no_priolist = false;
 

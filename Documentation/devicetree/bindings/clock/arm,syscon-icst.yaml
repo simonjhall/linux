@@ -66,8 +66,8 @@ properties:
       - arm,syscon-icst525-integratorcp-cm-mem
       - arm,integrator-cm-auxosc
       - arm,versatile-cm-auxosc
-      - arm,impd-vco1
-      - arm,impd-vco2
+      - arm,impd1-vco1
+      - arm,impd1-vco2
 
   clocks:
     description: Parent clock for the ICST VCO
@@ -89,9 +89,11 @@ required:
   - compatible
   - clocks
 
+additionalProperties: false
+
 examples:
   - |
-    vco1: clock@00 {
+    vco1: clock {
       compatible = "arm,impd1-vco1";
       #clock-cells = <0>;
       lock-offset = <0x08>;

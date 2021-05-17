@@ -74,7 +74,7 @@ void generic_svm_setup(struct svm_test_data *svm, void *guest_rip, void *guest_r
 	wrmsr(MSR_VM_HSAVE_PA, svm->save_area_gpa);
 
 	memset(vmcb, 0, sizeof(*vmcb));
-	asm volatile ("vmsave\n\t" : : "a" (vmcb_gpa) : "memory");
+	asm volatile ("vmsave %0\n\t" : : "a" (vmcb_gpa) : "memory");
 	vmcb_set_seg(&save->es, get_es(), 0, -1U, data_seg_attr);
 	vmcb_set_seg(&save->cs, get_cs(), 0, -1U, code_seg_attr);
 	vmcb_set_seg(&save->ss, get_ss(), 0, -1U, data_seg_attr);
@@ -131,31 +131,35 @@ void generic_svm_setup(struct svm_test_data *svm, void *guest_rip, void *guest_r
 void run_guest(struct vmcb *vmcb, uint64_t vmcb_gpa)
 {
 	asm volatile (
-		"vmload\n\t"
+		"vmload %[vmcb_gpa]\n\t"
 		"mov rflags, %%r15\n\t"	// rflags
 		"mov %%r15, 0x170(%[vmcb])\n\t"
 		"mov guest_regs, %%r15\n\t"	// rax
 		"mov %%r15, 0x1f8(%[vmcb])\n\t"
 		LOAD_GPR_C
-		"vmrun\n\t"
+		"vmrun %[vmcb_gpa]\n\t"
 		SAVE_GPR_C
 		"mov 0x170(%[vmcb]), %%r15\n\t"	// rflags
 		"mov %%r15, rflags\n\t"
 		"mov 0x1f8(%[vmcb]), %%r15\n\t"	// rax
 		"mov %%r15, guest_regs\n\t"
-		"vmsave\n\t"
+		"vmsave %[vmcb_gpa]\n\t"
 		: : [vmcb] "r" (vmcb), [vmcb_gpa] "a" (vmcb_gpa)
 		: "r15", "memory");
 }
 
-void nested_svm_check_supported(void)
+bool nested_svm_supported(void)
 {
 	struct kvm_cpuid_entry2 *entry =
 		kvm_get_supported_cpuid_entry(0x80000001);
 
-	if (!(entry->ecx & CPUID_SVM)) {
+	return entry->ecx & CPUID_SVM;
+}
+
+void nested_svm_check_supported(void)
+{
+	if (!nested_svm_supported()) {
 		print_skip("nested SVM not enabled");
 		exit(KSFT_SKIP);
 	}
 }
-

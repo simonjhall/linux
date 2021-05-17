@@ -627,6 +627,9 @@ static struct clockdomain *_get_clkdm(struct omap_hwmod *oh)
 {
 	struct clk_hw_omap *clk;
 
+	if (!oh)
+		return NULL;
+
 	if (oh->clkdm) {
 		return oh->clkdm;
 	} else if (oh->_clk) {
@@ -2134,6 +2137,7 @@ static int of_dev_hwmod_lookup(struct device_node *np,
 		if (res == 0) {
 			*found = fc;
 			*index = i;
+			of_node_put(np0);
 			return 0;
 		}
 	}
@@ -3435,7 +3439,7 @@ static int omap_hwmod_allocate_module(struct device *dev, struct omap_hwmod *oh,
 		regs = ioremap(data->module_pa,
 			       data->module_size);
 		if (!regs)
-			return -ENOMEM;
+			goto out_free_sysc;
 	}
 
 	/*
@@ -3445,13 +3449,13 @@ static int omap_hwmod_allocate_module(struct device *dev, struct omap_hwmod *oh,
 	if (oh->class->name && strcmp(oh->class->name, data->name)) {
 		class = kmemdup(oh->class, sizeof(*oh->class), GFP_KERNEL);
 		if (!class)
-			return -ENOMEM;
+			goto out_unmap;
 	}
 
 	if (list_empty(&oh->slave_ports)) {
 		oi = kcalloc(1, sizeof(*oi), GFP_KERNEL);
 		if (!oi)
-			return -ENOMEM;
+			goto out_free_class;
 
 		/*
 		 * Note that we assume interconnect interface clocks will be
@@ -3478,18 +3482,22 @@ static int omap_hwmod_allocate_module(struct device *dev, struct omap_hwmod *oh,
 	spin_unlock_irqrestore(&oh->_lock, flags);
 
 	return 0;
+
+out_free_class:
+	kfree(class);
+out_unmap:
+	iounmap(regs);
+out_free_sysc:
+	kfree(sysc);
+	return -ENOMEM;
 }
 
 static const struct omap_hwmod_reset omap24xx_reset_quirks[] = {
 	{ .match = "msdi", .len = 4, .reset = omap_msdi_reset, },
 };
 
-static const struct omap_hwmod_reset dra7_reset_quirks[] = {
-	{ .match = "pcie", .len = 4, .reset = dra7xx_pciess_reset, },
-};
-
 static const struct omap_hwmod_reset omap_reset_quirks[] = {
-	{ .match = "dss", .len = 3, .reset = omap_dss_reset, },
+	{ .match = "dss_core", .len = 8, .reset = omap_dss_reset, },
 	{ .match = "hdq1w", .len = 5, .reset = omap_hdq1w_reset, },
 	{ .match = "i2c", .len = 3, .reset = omap_i2c_reset, },
 	{ .match = "wd_timer", .len = 8, .reset = omap2_wd_timer_reset, },
@@ -3522,10 +3530,6 @@ omap_hwmod_init_reset_quirks(struct device *dev, struct omap_hwmod *oh,
 		omap_hwmod_init_reset_quirk(dev, oh, data,
 					    omap24xx_reset_quirks,
 					    ARRAY_SIZE(omap24xx_reset_quirks));
-
-	if (soc_is_dra7xx())
-		omap_hwmod_init_reset_quirk(dev, oh, data, dra7_reset_quirks,
-					    ARRAY_SIZE(dra7_reset_quirks));
 
 	omap_hwmod_init_reset_quirk(dev, oh, data, omap_reset_quirks,
 				    ARRAY_SIZE(omap_reset_quirks));
@@ -3669,6 +3673,9 @@ static void __init omap_hwmod_setup_earlycon_flags(void)
  */
 static int __init omap_hwmod_setup_all(void)
 {
+	if (!inited)
+		return 0;
+
 	_ensure_mpu_hwmod_is_setup(NULL);
 
 	omap_hwmod_for_each(_init, NULL);

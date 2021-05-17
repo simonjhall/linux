@@ -5,6 +5,9 @@
 #include "hclgevf_main.h"
 #include "hnae3.h"
 
+#define CREATE_TRACE_POINTS
+#include "hclgevf_trace.h"
+
 static int hclgevf_resp_to_errno(u16 resp_code)
 {
 	return resp_code ? -resp_code : 0;
@@ -106,6 +109,8 @@ int hclgevf_send_mbx_msg(struct hclgevf_dev *hdev,
 
 	memcpy(&req->msg, send_msg, sizeof(struct hclge_vf_to_pf_msg));
 
+	trace_hclge_vf_mbx_send(hdev, req);
+
 	/* synchronous send */
 	if (need_resp) {
 		mutex_lock(&hdev->mbx_resp.mbx_mutex);
@@ -178,6 +183,8 @@ void hclgevf_mbx_handler(struct hclgevf_dev *hdev)
 			hclge_mbx_ring_ptr_move_crq(crq);
 			continue;
 		}
+
+		trace_hclge_vf_mbx_get(hdev, req);
 
 		/* synchronous messages are time critical and need preferential
 		 * treatment. Therefore, we need to acknowledge all the sync
@@ -269,6 +276,7 @@ void hclgevf_mbx_async_handler(struct hclgevf_dev *hdev)
 	u8 duplex;
 	u32 speed;
 	u32 tail;
+	u8 flag;
 	u8 idx;
 
 	/* we can safely clear it now as we are at start of the async message
@@ -293,10 +301,15 @@ void hclgevf_mbx_async_handler(struct hclgevf_dev *hdev)
 			link_status = msg_q[1];
 			memcpy(&speed, &msg_q[2], sizeof(speed));
 			duplex = (u8)msg_q[4];
+			flag = (u8)msg_q[5];
 
 			/* update upper layer with new link link status */
 			hclgevf_update_link_status(hdev, link_status);
 			hclgevf_update_speed_duplex(hdev, speed, duplex);
+
+			if (flag & HCLGE_MBX_PUSH_LINK_STATUS_EN)
+				set_bit(HCLGEVF_STATE_PF_PUSH_LINK_STATUS,
+					&hdev->state);
 
 			break;
 		case HCLGE_MBX_LINK_STAT_MODE:

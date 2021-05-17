@@ -31,7 +31,7 @@ static unsigned long socfpga_dbg_clk_recalc_rate(struct clk_hw *hwclk,
 						  unsigned long parent_rate)
 {
 	struct socfpga_gate_clk *socfpgaclk = to_socfpga_gate_clk(hwclk);
-	u32 div = 1, val;
+	u32 div, val;
 
 	val = readl(socfpgaclk->div_reg) >> socfpgaclk->shift;
 	val &= GENMASK(socfpgaclk->width - 1, 0);
@@ -65,13 +65,13 @@ static const struct clk_ops dbgclk_ops = {
 	.get_parent = socfpga_gate_get_parent,
 };
 
-struct clk *s10_register_gate(const struct stratix10_gate_clock *clks, void __iomem *regbase)
+struct clk_hw *s10_register_gate(const struct stratix10_gate_clock *clks, void __iomem *regbase)
 {
-	struct clk *clk;
+	struct clk_hw *hw_clk;
 	struct socfpga_gate_clk *socfpga_clk;
 	struct clk_init_data init;
-	const char * const *parent_names = clks->parent_names;
 	const char *parent_name = clks->parent_name;
+	int ret;
 
 	socfpga_clk = kzalloc(sizeof(*socfpga_clk), GFP_KERNEL);
 	if (!socfpga_clk)
@@ -108,13 +108,17 @@ struct clk *s10_register_gate(const struct stratix10_gate_clock *clks, void __io
 	init.flags = clks->flags;
 
 	init.num_parents = clks->num_parents;
-	init.parent_names = parent_names ? parent_names : &parent_name;
+	init.parent_names = parent_name ? &parent_name : NULL;
+	if (init.parent_names == NULL)
+		init.parent_data = clks->parent_data;
 	socfpga_clk->hw.hw.init = &init;
 
-	clk = clk_register(NULL, &socfpga_clk->hw.hw);
-	if (WARN_ON(IS_ERR(clk))) {
+	hw_clk = &socfpga_clk->hw.hw;
+
+	ret = clk_hw_register(NULL, &socfpga_clk->hw.hw);
+	if (ret) {
 		kfree(socfpga_clk);
-		return NULL;
+		return ERR_PTR(ret);
 	}
-	return clk;
+	return hw_clk;
 }

@@ -1,6 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
- * SPDX-License-Identifier: GPL-2.0
- *
  * Copyright © 2019 Intel Corporation
  */
 
@@ -24,7 +23,8 @@ static int request_sync(struct i915_request *rq)
 
 	/* Opencode i915_request_add() so we can keep the timeline locked. */
 	__i915_request_commit(rq);
-	__i915_request_queue(rq, NULL);
+	rq->sched.attr.priority = I915_PRIORITY_BARRIER;
+	__i915_request_queue_bh(rq);
 
 	timeout = i915_request_wait(rq, 0, HZ / 10);
 	if (timeout < 0)
@@ -67,6 +67,8 @@ static int context_sync(struct intel_context *ce)
 	} while (!err);
 	mutex_unlock(&tl->mutex);
 
+	/* Wait for all barriers to complete (remote CPU) before we check */
+	i915_active_unlock_wait(&ce->active);
 	return err;
 }
 
@@ -85,8 +87,8 @@ static int __live_context_size(struct intel_engine_cs *engine)
 	if (err)
 		goto err;
 
-	vaddr = i915_gem_object_pin_map(ce->state->obj,
-					i915_coherent_map_type(engine->i915));
+	vaddr = i915_gem_object_pin_map_unlocked(ce->state->obj,
+						 i915_coherent_map_type(engine->i915));
 	if (IS_ERR(vaddr)) {
 		err = PTR_ERR(vaddr);
 		intel_context_unpin(ce);
@@ -154,10 +156,7 @@ static int live_context_size(void *arg)
 	 */
 
 	for_each_engine(engine, gt, id) {
-		struct {
-			struct drm_i915_gem_object *state;
-			void *pinned;
-		} saved;
+		struct file *saved;
 
 		if (!engine->context_size)
 			continue;
@@ -171,8 +170,7 @@ static int live_context_size(void *arg)
 		 * active state is sufficient, we are only checking that we
 		 * don't use more than we planned.
 		 */
-		saved.state = fetch_and_zero(&engine->default_state);
-		saved.pinned = fetch_and_zero(&engine->pinned_default_state);
+		saved = fetch_and_zero(&engine->default_state);
 
 		/* Overlaps with the execlists redzone */
 		engine->context_size += I915_GTT_PAGE_SIZE;
@@ -181,8 +179,7 @@ static int live_context_size(void *arg)
 
 		engine->context_size -= I915_GTT_PAGE_SIZE;
 
-		engine->pinned_default_state = saved.pinned;
-		engine->default_state = saved.state;
+		engine->default_state = saved;
 
 		intel_engine_pm_put(engine);
 

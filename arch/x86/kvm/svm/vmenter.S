@@ -3,6 +3,7 @@
 #include <asm/asm.h>
 #include <asm/bitsperlong.h>
 #include <asm/kvm_vcpu_regs.h>
+#include <asm/nospec-branch.h>
 
 #define WORD_SIZE (BITS_PER_LONG / 8)
 
@@ -26,7 +27,7 @@
 #define VCPU_R15	__VCPU_REGS_R15 * WORD_SIZE
 #endif
 
-	.text
+.section .noinstr.text, "ax"
 
 /**
  * __svm_vcpu_run - Run a vCPU via a transition to SVM guest mode
@@ -35,7 +36,6 @@
  */
 SYM_FUNC_START(__svm_vcpu_run)
 	push %_ASM_BP
-	mov  %_ASM_SP, %_ASM_BP
 #ifdef CONFIG_X86_64
 	push %r15
 	push %r14
@@ -78,27 +78,17 @@ SYM_FUNC_START(__svm_vcpu_run)
 	pop %_ASM_AX
 
 	/* Enter guest mode */
-1:	vmload %_ASM_AX
-	jmp 3f
-2:	cmpb $0, kvm_rebooting
-	jne 3f
-	ud2
-	_ASM_EXTABLE(1b, 2b)
+	sti
 
-3:	vmrun %_ASM_AX
-	jmp 5f
-4:	cmpb $0, kvm_rebooting
-	jne 5f
-	ud2
-	_ASM_EXTABLE(3b, 4b)
+1:	vmrun %_ASM_AX
 
-5:	vmsave %_ASM_AX
-	jmp 7f
-6:	cmpb $0, kvm_rebooting
-	jne 7f
-	ud2
-	_ASM_EXTABLE(5b, 6b)
-7:
+2:	cli
+
+#ifdef CONFIG_RETPOLINE
+	/* IMPORTANT: Stuff the RSB immediately after VM-Exit, before RET! */
+	FILL_RETURN_BUFFER %_ASM_AX, RSB_CLEAR_LOOPS, X86_FEATURE_RETPOLINE
+#endif
+
 	/* "POP" @regs to RAX. */
 	pop %_ASM_AX
 
@@ -159,4 +149,65 @@ SYM_FUNC_START(__svm_vcpu_run)
 #endif
 	pop %_ASM_BP
 	ret
+
+3:	cmpb $0, kvm_rebooting
+	jne 2b
+	ud2
+
+	_ASM_EXTABLE(1b, 3b)
+
 SYM_FUNC_END(__svm_vcpu_run)
+
+/**
+ * __svm_sev_es_vcpu_run - Run a SEV-ES vCPU via a transition to SVM guest mode
+ * @vmcb_pa:	unsigned long
+ */
+SYM_FUNC_START(__svm_sev_es_vcpu_run)
+	push %_ASM_BP
+#ifdef CONFIG_X86_64
+	push %r15
+	push %r14
+	push %r13
+	push %r12
+#else
+	push %edi
+	push %esi
+#endif
+	push %_ASM_BX
+
+	/* Move @vmcb to RAX. */
+	mov %_ASM_ARG1, %_ASM_AX
+
+	/* Enter guest mode */
+	sti
+
+1:	vmrun %_ASM_AX
+
+2:	cli
+
+#ifdef CONFIG_RETPOLINE
+	/* IMPORTANT: Stuff the RSB immediately after VM-Exit, before RET! */
+	FILL_RETURN_BUFFER %_ASM_AX, RSB_CLEAR_LOOPS, X86_FEATURE_RETPOLINE
+#endif
+
+	pop %_ASM_BX
+
+#ifdef CONFIG_X86_64
+	pop %r12
+	pop %r13
+	pop %r14
+	pop %r15
+#else
+	pop %esi
+	pop %edi
+#endif
+	pop %_ASM_BP
+	ret
+
+3:	cmpb $0, kvm_rebooting
+	jne 2b
+	ud2
+
+	_ASM_EXTABLE(1b, 3b)
+
+SYM_FUNC_END(__svm_sev_es_vcpu_run)

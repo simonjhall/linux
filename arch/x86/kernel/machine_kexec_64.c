@@ -19,7 +19,6 @@
 #include <linux/efi.h>
 
 #include <asm/init.h>
-#include <asm/pgtable.h>
 #include <asm/tlbflush.h>
 #include <asm/mmu_context.h>
 #include <asm/io_apic.h>
@@ -261,7 +260,7 @@ static void set_idt(void *newidt, u16 limit)
 {
 	struct desc_ptr curidt;
 
-	/* x86-64 supports unaliged loads & stores */
+	/* x86-64 supports unaligned loads & stores */
 	curidt.size    = limit;
 	curidt.address = (unsigned long)newidt;
 
@@ -403,8 +402,8 @@ void machine_kexec(struct kimage *image)
 #ifdef CONFIG_KEXEC_FILE
 void *arch_kexec_kernel_image_load(struct kimage *image)
 {
-	vfree(image->arch.elf_headers);
-	image->arch.elf_headers = NULL;
+	vfree(image->elf_headers);
+	image->elf_headers = NULL;
 
 	if (!image->fops || !image->fops->load)
 		return ERR_PTR(-ENOEXEC);

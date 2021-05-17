@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Copyright (C) 2018 - 2019 Intel Corporation
+ * Copyright (C) 2018 - 2021 Intel Corporation
  */
 #ifndef __PMSR_H
 #define __PMSR_H
@@ -158,6 +158,16 @@ static int pmsr_parse_ftm(struct cfg80211_registered_device *rdev,
 		return -EINVAL;
 	}
 
+	out->ftm.lmr_feedback =
+		!!tb[NL80211_PMSR_FTM_REQ_ATTR_LMR_FEEDBACK];
+	if (!out->ftm.trigger_based && !out->ftm.non_trigger_based &&
+	    out->ftm.lmr_feedback) {
+		NL_SET_ERR_MSG_ATTR(info->extack,
+				    tb[NL80211_PMSR_FTM_REQ_ATTR_LMR_FEEDBACK],
+				    "FTM: LMR feedback set for EDCA based ranging");
+		return -EINVAL;
+	}
+
 	return 0;
 }
 
@@ -187,10 +197,9 @@ static int pmsr_parse_peer(struct cfg80211_registered_device *rdev,
 
 	/* reuse info->attrs */
 	memset(info->attrs, 0, sizeof(*info->attrs) * (NL80211_ATTR_MAX + 1));
-	/* need to validate here, we don't want to have validation recursion */
 	err = nla_parse_nested_deprecated(info->attrs, NL80211_ATTR_MAX,
 					  tb[NL80211_PMSR_PEER_ATTR_CHAN],
-					  nl80211_policy, info->extack);
+					  NULL, info->extack);
 	if (err)
 		return err;
 

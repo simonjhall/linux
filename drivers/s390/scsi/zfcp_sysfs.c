@@ -216,9 +216,21 @@ static ssize_t zfcp_sysfs_port_rescan_store(struct device *dev,
 {
 	struct ccw_device *cdev = to_ccwdev(dev);
 	struct zfcp_adapter *adapter = zfcp_ccw_adapter_by_cdev(cdev);
+	int retval = 0;
 
 	if (!adapter)
 		return -ENODEV;
+
+	/*
+	 * If `scsi_host` is missing, we can't schedule `scan_work`, as it
+	 * makes use of the corresponding fc_host object. But this state is
+	 * only possible if xconfig/xport data has never completed yet,
+	 * and we couldn't successfully scan for ports anyway.
+	 */
+	if (adapter->scsi_host == NULL) {
+		retval = -ENODEV;
+		goto out;
+	}
 
 	/*
 	 * Users wish is our command: immediately schedule and flush a
@@ -227,9 +239,9 @@ static ssize_t zfcp_sysfs_port_rescan_store(struct device *dev,
 	 */
 	queue_delayed_work(adapter->work_queue, &adapter->scan_work, 0);
 	flush_delayed_work(&adapter->scan_work);
+out:
 	zfcp_ccw_adapter_put(adapter);
-
-	return (ssize_t) count;
+	return retval ? retval : (ssize_t) count;
 }
 static ZFCP_DEV_ATTR(adapter, port_rescan, S_IWUSR, NULL,
 		     zfcp_sysfs_port_rescan_store);
@@ -315,10 +327,10 @@ static ssize_t zfcp_sysfs_port_remove_store(struct device *dev,
 	list_del(&port->list);
 	write_unlock_irq(&adapter->port_list_lock);
 
-	put_device(&port->dev);
-
 	zfcp_erp_port_shutdown(port, 0, "syprs_1");
 	device_unregister(&port->dev);
+
+	put_device(&port->dev); /* undo zfcp_get_port_by_wwpn() */
  out:
 	zfcp_ccw_adapter_put(adapter);
 	return retval ? retval : (ssize_t) count;
@@ -423,7 +435,7 @@ static struct attribute *zfcp_adapter_attrs[] = {
 	NULL
 };
 
-struct attribute_group zfcp_sysfs_adapter_attrs = {
+static const struct attribute_group zfcp_sysfs_adapter_attr_group = {
 	.attrs = zfcp_adapter_attrs,
 };
 
@@ -894,7 +906,13 @@ static struct attribute *zfcp_sysfs_diag_attrs[] = {
 	NULL,
 };
 
-const struct attribute_group zfcp_sysfs_diag_attr_group = {
+static const struct attribute_group zfcp_sysfs_diag_attr_group = {
 	.name = "diagnostics",
 	.attrs = zfcp_sysfs_diag_attrs,
+};
+
+const struct attribute_group *zfcp_sysfs_adapter_attr_groups[] = {
+	&zfcp_sysfs_adapter_attr_group,
+	&zfcp_sysfs_diag_attr_group,
+	NULL,
 };

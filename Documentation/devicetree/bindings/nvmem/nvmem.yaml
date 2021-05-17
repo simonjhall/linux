@@ -20,9 +20,6 @@ description: |
   storage device.
 
 properties:
-  $nodename:
-    pattern: "^(eeprom|efuse|nvram)(@.*|-[0-9a-f])*$"
-
   "#address-cells":
     const: 1
 
@@ -67,7 +64,7 @@ patternProperties:
     required:
       - reg
 
-    additionalProperties: false
+additionalProperties: true
 
 examples:
   - |

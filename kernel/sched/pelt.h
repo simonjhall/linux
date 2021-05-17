@@ -37,6 +37,11 @@ update_irq_load_avg(struct rq *rq, u64 running)
 }
 #endif
 
+static inline u32 get_pelt_divider(struct sched_avg *avg)
+{
+	return LOAD_AVG_MAX - 1024 + avg->period_contrib;
+}
+
 /*
  * When a task is dequeued, its estimated utilization should not be update if
  * its util_avg has not been updated at least once.
@@ -125,7 +130,7 @@ static inline void update_idle_rq_clock_pelt(struct rq *rq)
 	 * Reflecting stolen time makes sense only if the idle
 	 * phase would be present at max capacity. As soon as the
 	 * utilization of a rq has reached the maximum value, it is
-	 * considered as an always runnig rq without idle time to
+	 * considered as an always running rq without idle time to
 	 * steal. This potential idle time is considered as lost in
 	 * this case. We keep track of this lost idle time compare to
 	 * rq's clock_task.

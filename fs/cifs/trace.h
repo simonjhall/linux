@@ -318,6 +318,7 @@ DEFINE_EVENT(smb3_inf_compound_enter_class, smb3_##name,    \
 	TP_ARGS(xid, tid, sesid, full_path))
 
 DEFINE_SMB3_INF_COMPOUND_ENTER_EVENT(query_info_compound_enter);
+DEFINE_SMB3_INF_COMPOUND_ENTER_EVENT(posix_query_info_compound_enter);
 DEFINE_SMB3_INF_COMPOUND_ENTER_EVENT(hardlink_enter);
 DEFINE_SMB3_INF_COMPOUND_ENTER_EVENT(rename_enter);
 DEFINE_SMB3_INF_COMPOUND_ENTER_EVENT(rmdir_enter);
@@ -354,6 +355,7 @@ DEFINE_EVENT(smb3_inf_compound_done_class, smb3_##name,    \
 	TP_ARGS(xid, tid, sesid))
 
 DEFINE_SMB3_INF_COMPOUND_DONE_EVENT(query_info_compound_done);
+DEFINE_SMB3_INF_COMPOUND_DONE_EVENT(posix_query_info_compound_done);
 DEFINE_SMB3_INF_COMPOUND_DONE_EVENT(hardlink_done);
 DEFINE_SMB3_INF_COMPOUND_DONE_EVENT(rename_done);
 DEFINE_SMB3_INF_COMPOUND_DONE_EVENT(rmdir_done);
@@ -395,6 +397,7 @@ DEFINE_EVENT(smb3_inf_compound_err_class, smb3_##name,    \
 	TP_ARGS(xid, tid, sesid, rc))
 
 DEFINE_SMB3_INF_COMPOUND_ERR_EVENT(query_info_compound_err);
+DEFINE_SMB3_INF_COMPOUND_ERR_EVENT(posix_query_info_compound_err);
 DEFINE_SMB3_INF_COMPOUND_ERR_EVENT(hardlink_err);
 DEFINE_SMB3_INF_COMPOUND_ERR_EVENT(rename_err);
 DEFINE_SMB3_INF_COMPOUND_ERR_EVENT(rmdir_err);
@@ -848,17 +851,21 @@ DEFINE_SMB3_LEASE_ERR_EVENT(lease_err);
 
 DECLARE_EVENT_CLASS(smb3_reconnect_class,
 	TP_PROTO(__u64	currmid,
+		__u64 conn_id,
 		char *hostname),
-	TP_ARGS(currmid, hostname),
+	TP_ARGS(currmid, conn_id, hostname),
 	TP_STRUCT__entry(
 		__field(__u64, currmid)
+		__field(__u64, conn_id)
 		__field(char *, hostname)
 	),
 	TP_fast_assign(
 		__entry->currmid = currmid;
+		__entry->conn_id = conn_id;
 		__entry->hostname = hostname;
 	),
-	TP_printk("server=%s current_mid=0x%llx",
+	TP_printk("conn_id=0x%llx server=%s current_mid=%llu",
+		__entry->conn_id,
 		__entry->hostname,
 		__entry->currmid)
 )
@@ -866,42 +873,64 @@ DECLARE_EVENT_CLASS(smb3_reconnect_class,
 #define DEFINE_SMB3_RECONNECT_EVENT(name)        \
 DEFINE_EVENT(smb3_reconnect_class, smb3_##name,  \
 	TP_PROTO(__u64	currmid,		\
-		char *hostname),		\
-	TP_ARGS(currmid, hostname))
+		__u64 conn_id,			\
+		char *hostname),				\
+	TP_ARGS(currmid, conn_id, hostname))
 
 DEFINE_SMB3_RECONNECT_EVENT(reconnect);
 DEFINE_SMB3_RECONNECT_EVENT(partial_send_reconnect);
 
 DECLARE_EVENT_CLASS(smb3_credit_class,
 	TP_PROTO(__u64	currmid,
+		__u64 conn_id,
 		char *hostname,
-		int credits),
-	TP_ARGS(currmid, hostname, credits),
+		int credits,
+		int credits_to_add,
+		int in_flight),
+	TP_ARGS(currmid, conn_id, hostname, credits, credits_to_add, in_flight),
 	TP_STRUCT__entry(
 		__field(__u64, currmid)
+		__field(__u64, conn_id)
 		__field(char *, hostname)
 		__field(int, credits)
+		__field(int, credits_to_add)
+		__field(int, in_flight)
 	),
 	TP_fast_assign(
 		__entry->currmid = currmid;
+		__entry->conn_id = conn_id;
 		__entry->hostname = hostname;
 		__entry->credits = credits;
+		__entry->credits_to_add = credits_to_add;
+		__entry->in_flight = in_flight;
 	),
-	TP_printk("server=%s current_mid=0x%llx credits=%d",
+	TP_printk("conn_id=0x%llx server=%s current_mid=%llu "
+			"credits=%d credit_change=%d in_flight=%d",
+		__entry->conn_id,
 		__entry->hostname,
 		__entry->currmid,
-		__entry->credits)
+		__entry->credits,
+		__entry->credits_to_add,
+		__entry->in_flight)
 )
 
 #define DEFINE_SMB3_CREDIT_EVENT(name)        \
 DEFINE_EVENT(smb3_credit_class, smb3_##name,  \
 	TP_PROTO(__u64	currmid,		\
+		__u64 conn_id,			\
 		char *hostname,			\
-		int  credits),			\
-	TP_ARGS(currmid, hostname, credits))
+		int  credits,			\
+		int  credits_to_add,	\
+		int in_flight),			\
+	TP_ARGS(currmid, conn_id, hostname, credits, credits_to_add, in_flight))
 
 DEFINE_SMB3_CREDIT_EVENT(reconnect_with_invalid_credits);
+DEFINE_SMB3_CREDIT_EVENT(reconnect_detected);
 DEFINE_SMB3_CREDIT_EVENT(credit_timeout);
+DEFINE_SMB3_CREDIT_EVENT(insufficient_credits);
+DEFINE_SMB3_CREDIT_EVENT(too_many_credits);
+DEFINE_SMB3_CREDIT_EVENT(add_credits);
+DEFINE_SMB3_CREDIT_EVENT(set_credits);
 
 #endif /* _CIFS_TRACE_H */
 

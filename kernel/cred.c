@@ -33,7 +33,7 @@ do {									\
 static struct kmem_cache *cred_jar;
 
 /* init to 2 - one for init_task, one to ensure it is never freed */
-struct group_info init_groups = { .usage = ATOMIC_INIT(2) };
+static struct group_info init_groups = { .usage = ATOMIC_INIT(2) };
 
 /*
  * The initial credentials for the initial task
@@ -314,6 +314,9 @@ struct cred *prepare_exec_creds(void)
 	key_put(new->process_keyring);
 	new->process_keyring = NULL;
 #endif
+
+	new->suid = new->fsuid = new->euid;
+	new->sgid = new->fsgid = new->egid;
 
 	return new;
 }

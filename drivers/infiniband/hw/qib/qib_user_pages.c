@@ -43,7 +43,7 @@ static void __qib_release_user_pages(struct page **p, size_t num_pages,
 	unpin_user_pages_dirty_lock(p, num_pages, dirty);
 }
 
-/**
+/*
  * qib_map_page - a safety wrapper around pci_map_page()
  *
  * A dma_addr of all 0's is interpreted by the chip as "disabled".
@@ -106,18 +106,18 @@ int qib_get_user_pages(unsigned long start_page, size_t num_pages,
 		goto bail;
 	}
 
-	down_read(&current->mm->mmap_sem);
+	mmap_read_lock(current->mm);
 	for (got = 0; got < num_pages; got += ret) {
 		ret = pin_user_pages(start_page + got * PAGE_SIZE,
 				     num_pages - got,
 				     FOLL_LONGTERM | FOLL_WRITE | FOLL_FORCE,
 				     p + got, NULL);
 		if (ret < 0) {
-			up_read(&current->mm->mmap_sem);
+			mmap_read_unlock(current->mm);
 			goto bail_release;
 		}
 	}
-	up_read(&current->mm->mmap_sem);
+	mmap_read_unlock(current->mm);
 
 	return 0;
 bail_release:

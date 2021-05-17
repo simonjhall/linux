@@ -1,6 +1,5 @@
+/* SPDX-License-Identifier: MIT */
 /*
- * SPDX-License-Identifier: MIT
- *
  * Copyright © 2019 Intel Corporation
  */
 
@@ -35,6 +34,12 @@ static inline void intel_engine_pm_put(struct intel_engine_cs *engine)
 static inline void intel_engine_pm_put_async(struct intel_engine_cs *engine)
 {
 	intel_wakeref_put_async(&engine->wakeref);
+}
+
+static inline void intel_engine_pm_put_delay(struct intel_engine_cs *engine,
+					     unsigned long delay)
+{
+	intel_wakeref_put_delay(&engine->wakeref, delay);
 }
 
 static inline void intel_engine_pm_flush(struct intel_engine_cs *engine)

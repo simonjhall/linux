@@ -156,7 +156,7 @@ struct lance_memory {
 	struct lance_init_block	init;
 	struct lance_tx_head	tx_head[TX_RING_SIZE];
 	struct lance_rx_head	rx_head[RX_RING_SIZE];
-	char					packet_area[0];	/* packet data follow after the
+	char					packet_area[];	/* packet data follow after the
 											 * init block and the ring
 											 * descriptors and are located
 											 * at runtime */
@@ -1156,11 +1156,3 @@ static void __exit atarilance_module_exit(void)
 module_init(atarilance_module_init);
 module_exit(atarilance_module_exit);
 #endif /* MODULE */
-
-
-/*
- * Local variables:
- *  c-indent-level: 4
- *  tab-width: 4
- * End:
- */

@@ -47,13 +47,6 @@ struct intel_guc {
 	struct i915_vma *stage_desc_pool;
 	void *stage_desc_pool_vaddr;
 
-	struct i915_vma *workqueue;
-	void *workqueue_vaddr;
-	spinlock_t wq_lock;
-
-	struct i915_vma *proc_desc;
-	void *proc_desc_vaddr;
-
 	/* Control params for fw initialization */
 	u32 params[GUC_CTL_MAX_DWORDS];
 
@@ -73,6 +66,11 @@ struct intel_guc {
 	/* To serialize the intel_guc_send actions */
 	struct mutex send_mutex;
 };
+
+static inline struct intel_guc *log_to_guc(struct intel_guc_log *log)
+{
+	return container_of(log, struct intel_guc, log);
+}
 
 static
 inline int intel_guc_send(struct intel_guc *guc, const u32 *action, u32 len)
@@ -189,5 +187,7 @@ static inline void intel_guc_disable_msg(struct intel_guc *guc, u32 mask)
 
 int intel_guc_reset_engine(struct intel_guc *guc,
 			   struct intel_engine_cs *engine);
+
+void intel_guc_load_status(struct intel_guc *guc, struct drm_printer *p);
 
 #endif

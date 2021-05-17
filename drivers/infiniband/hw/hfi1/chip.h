@@ -1,7 +1,7 @@
 #ifndef _CHIP_H
 #define _CHIP_H
 /*
- * Copyright(c) 2015 - 2018 Intel Corporation.
+ * Copyright(c) 2015 - 2020 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -822,11 +822,6 @@ int acquire_lcb_access(struct hfi1_devdata *dd, int sleep_ok);
 int release_lcb_access(struct hfi1_devdata *dd, int sleep_ok);
 #define LCB_START DC_LCB_CSRS
 #define LCB_END   DC_8051_CSRS /* next block is 8051 */
-static inline int is_lcb_offset(u32 offset)
-{
-	return (offset >= LCB_START && offset < LCB_END);
-}
-
 extern uint num_vls;
 
 extern uint disable_integrity;
@@ -1447,6 +1442,7 @@ irqreturn_t general_interrupt(int irq, void *data);
 irqreturn_t sdma_interrupt(int irq, void *data);
 irqreturn_t receive_context_interrupt(int irq, void *data);
 irqreturn_t receive_context_thread(int irq, void *data);
+irqreturn_t receive_context_interrupt_napi(int irq, void *data);
 
 int set_intr_bits(struct hfi1_devdata *dd, u16 first, u16 last, bool set);
 void init_qsfp_int(struct hfi1_devdata *dd);
@@ -1455,6 +1451,8 @@ void remap_intr(struct hfi1_devdata *dd, int isrc, int msix_intr);
 void remap_sdma_interrupts(struct hfi1_devdata *dd, int engine, int msix_intr);
 void reset_interrupts(struct hfi1_devdata *dd);
 u8 hfi1_get_qp_map(struct hfi1_devdata *dd, u8 idx);
+void hfi1_init_aip_rsm(struct hfi1_devdata *dd);
+void hfi1_deinit_aip_rsm(struct hfi1_devdata *dd);
 
 /*
  * Interrupt source table.

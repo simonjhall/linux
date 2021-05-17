@@ -23,6 +23,13 @@
 #define DEFAULT_MGN_LIFETIME_RES_64us	125  /* 64us */
 #define DEFAULT_MSDU_LIFETIME_RES_64us  8000
 
+/* Length, Service, and Signal fields of Phy for Tx */
+struct vnt_phy_field {
+	u8 signal;
+	u8 service;
+	__le16 len;
+} __packed;
+
 /* MIC HDR data header */
 struct vnt_mic_hdr {
 	u8 id;
@@ -70,14 +77,12 @@ struct vnt_tx_datahead_g {
 	__le16 duration_a;
 	__le16 time_stamp_off_b;
 	__le16 time_stamp_off_a;
-	struct ieee80211_hdr hdr;
 } __packed;
 
 struct vnt_tx_datahead_ab {
 	struct vnt_phy_field ab;
 	__le16 duration;
 	__le16 time_stamp_off;
-	struct ieee80211_hdr hdr;
 } __packed;
 
 /* RTS buffer header */
@@ -90,7 +95,7 @@ struct vnt_rts_g {
 	u16 wReserved;
 	struct ieee80211_rts data;
 	struct vnt_tx_datahead_g data_head;
-} __packed;
+} __packed __aligned(2);
 
 struct vnt_rts_ab {
 	struct vnt_phy_field ab;
@@ -98,7 +103,7 @@ struct vnt_rts_ab {
 	u16 wReserved;
 	struct ieee80211_rts data;
 	struct vnt_tx_datahead_ab data_head;
-} __packed;
+} __packed __aligned(2);
 
 /* CTS buffer header */
 struct vnt_cts {
@@ -108,7 +113,7 @@ struct vnt_cts {
 	struct ieee80211_cts data;
 	u16 reserved2;
 	struct vnt_tx_datahead_g data_head;
-} __packed;
+} __packed __aligned(2);
 
 union vnt_tx_data_head {
 	/* rts g */
@@ -155,9 +160,6 @@ struct vnt_tx_fifo_head {
 } __packed;
 
 struct vnt_tx_buffer {
-	u8 type;
-	u8 pkt_no;
-	__le16 tx_byte_count;
 	struct vnt_tx_fifo_head fifo_head;
 	union vnt_tx_head tx_head;
 } __packed;
@@ -168,14 +170,6 @@ struct vnt_tx_short_buf_head {
 	struct vnt_phy_field ab;
 	__le16 duration;
 	__le16 time_stamp_off;
-} __packed;
-
-struct vnt_beacon_buffer {
-	u8 type;
-	u8 pkt_no;
-	__le16 tx_byte_count;
-	struct vnt_tx_short_buf_head short_head;
-	struct ieee80211_mgmt mgmt_hdr;
 } __packed;
 
 int vnt_tx_packet(struct vnt_private *priv, struct sk_buff *skb);
