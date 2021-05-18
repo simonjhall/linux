@@ -83,6 +83,8 @@ extern unsigned long mm_cachebits;
 #define PAGE_COPY_C	__pgprot(_PAGE_PRESENT | _PAGE_RONLY | _PAGE_ACCESSED)
 #define PAGE_READONLY_C	__pgprot(_PAGE_PRESENT | _PAGE_RONLY | _PAGE_ACCESSED)
 
+#define pte_pgprot(x)	__pgprot(pte_val(x) & ~_TABLE_MASK)
+
 /*
  * The m68k can't do page protection for execute, and considers that the same are read.
  * Also, write permissions imply read permissions. This is the closest we can get..

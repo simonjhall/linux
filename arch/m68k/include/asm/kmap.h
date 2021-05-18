@@ -16,6 +16,7 @@
  * These functions exported by arch/m68k/mm/kmap.c.
  * Only needed on MMU enabled systems.
  */
+// void __iomem *ioremap_prot(phys_addr_t addr, size_t size, unsigned long prot);
 extern void __iomem *__ioremap(unsigned long physaddr, unsigned long size,
 			       int cacheflag);
 #define iounmap iounmap
@@ -33,6 +34,11 @@ static inline void __iomem *ioremap_wt(unsigned long physaddr,
 				       unsigned long size)
 {
 	return __ioremap(physaddr, size, IOMAP_WRITETHROUGH);
+}
+
+static inline void __iomem *ioremap_prot(phys_addr_t addr, size_t size, unsigned long prot)
+{
+	return __ioremap(addr, size, IOMAP_NOCACHE_SER);
 }
 
 #define memset_io memset_io
