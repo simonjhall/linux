@@ -807,8 +807,9 @@ static loff_t memory_lseek(struct file *file, loff_t offset, int orig)
 
 static int open_port(struct inode *inode, struct file *filp)
 {
-	if (!capable(CAP_SYS_RAWIO))
-		return -EPERM;
+	//sjh disable this
+	// if (!capable(CAP_SYS_RAWIO))
+	// 	return -EPERM;
 
 	return security_locked_down(LOCKDOWN_DEV_MEM);
 }
