@@ -371,6 +371,238 @@ static uintptr_t __init best_map_size(phys_addr_t base, phys_addr_t size)
 #error "setup_vm() is called from head.S before relocate so it should not use absolute addressing."
 #endif
 
+enum TrapCause
+{
+	TrapInsAddrMisaligned	=	0,
+	TrapInsAccFault			=	1,
+	TrapIllegalIns			=	2,
+	TrapBreakpoint			=	3,
+	TrapLoadMisaligned		=	4,
+	TrapLoadFault			=	5,
+	TrapStoreMisaligned		=	6,
+	TrapStoreFault			=	7,
+	TrapUserCall			=	8,
+	TrapSuperCall			=	9,
+	TrapMachineCall			=	11,
+	TrapInsPageFault		=	12,
+	TrapLoadPageFault		=	13,
+	TrapStorePageFault		=	15,
+
+	TrapInstTlbMiss			=	24,
+	TrapDataTlbMiss			=	25,
+};
+
+asmlinkage void _m_write_tlb(uint32_t id, uint32_t vpn, uint32_t ppn, uint32_t daguxwrv)
+{
+	//{r_tlb_ppn[0], r_tlb_daguxwrv[0], r_tlb_valid[0]} <= r_csrRead[30:0];
+	//r_tlb_vpn[0] <= r_csrRead[19:0];
+	if (id == 0)
+	{
+		csr_write(0x7c0, (ppn << 9) | (daguxwrv << 1) | 1);
+		csr_write(0x7c1, vpn);
+	}
+	else
+	{
+		csr_write(0x7c2, (ppn << 9) | (daguxwrv << 1) | 1);
+		csr_write(0x7c3, vpn);
+	}
+}
+
+asmlinkage void _m_exception_c(uint32_t *pRegs)
+{
+	uint32_t cause = csr_read(CSR_MCAUSE);
+	uint32_t tval = csr_read(CSR_MTVAL);
+
+	if (cause & (1 << 31))
+	{
+		//exception
+		switch (cause & 31)
+		{
+			case TrapIllegalIns:
+			{
+				
+				//fall through if not decoded
+			}
+
+			case TrapInsAddrMisaligned:
+			case TrapInsAccFault:
+			case TrapBreakpoint:
+			case TrapLoadMisaligned:
+			case TrapLoadFault:
+			case TrapStoreMisaligned:
+			case TrapStoreFault:
+			case TrapUserCall:
+			case TrapSuperCall:
+			case TrapInsPageFault:
+			case TrapLoadPageFault:
+			case TrapStorePageFault:
+			default:
+			{
+				//delegated to supervisor mode
+				//manually perform a trap with the help of mret
+				uint32_t mstatus = csr_read(CSR_MSTATUS);
+				uint32_t mstatus_mpp = (mstatus >> 11) & 3;		//previous mode before machine mode trap
+				uint32_t mstatus_sie = (mstatus >> 1) & 1;		//current sie
+
+				// spie <= sie
+				mstatus = mstatus & ~(1 << 5);					//clear spie
+				mstatus = mstatus | (mstatus_sie << 5);			//set spie
+
+				// sie <= 0
+				mstatus = mstatus & ~(1 << 1);					//clear sie
+
+				// spp <= previous mode
+				mstatus = mstatus & ~(1 << 8);					//clear spp
+				mstatus = mstatus | ((mstatus_mpp & 1) << 8);	//set spp based on previous mode
+
+				mstatus = mstatus & ~(3 << 11);					//clear mpp
+				mstatus = mstatus | (1 << 11);					//set supervisor mode to return to
+
+				csr_write(CSR_MSTATUS, mstatus);
+
+				// sepc <= pc
+				csr_write(CSR_SEPC, csr_read(CSR_MEPC));
+
+				// pc <= stvec
+				csr_write(CSR_MEPC, csr_read(CSR_STVEC));		//the address we want to return to
+
+				// stval <= failing access VA / zero
+				csr_write(CSR_STVAL, csr_read(CSR_MTVAL));
+
+				// scause <= {interrupt ? 1 :0, code}
+				csr_write(CSR_SCAUSE, csr_read(CSR_MCAUSE));
+				break;
+			}
+
+			case TrapMachineCall:
+				//do something
+				break;
+
+			case TrapInstTlbMiss:
+			{
+				//sv32
+				uint32_t satp = csr_read(CSR_SATP);
+				uint32_t satp_ppn = satp & ((1 << 22) - 1);
+				uint32_t satp_ppn_4k = satp_ppn << 12;
+
+				uint32_t tval_vpn = tval >> 12;
+
+				//PTE at address satp.ppn × PAGESIZE + va.vpn[1] × PTESIZE
+				uint32_t pte1_addr = satp_ppn_4k + (tval_vpn >> 10) * 4;
+				uint32_t pte1 = *(uint32_t *)pte1_addr;
+
+				//if superpage OR pte not valid
+				if ((pte1 & 0xe) || ((pte1 & 1) == 0))
+				{
+					//if not valid: write anything
+
+					//if superpage: i = 1, LEVELS = 2
+					//pa.ppn[i − 1 : 0] = va.vpn[i − 1 : 0]
+					//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i]
+
+					if (pte1 & 1)
+					{
+						//if valid, set A
+						pte1 |= (1 << 6);
+						//and write back
+						*(uint32_t *)pte1_addr = pte1;
+					}
+
+					_m_write_tlb(0, tval_vpn,
+						((pte1 >> 20) << 10) | (tval_vpn & 1023),
+						pte1 & 0xff);
+					break;
+				}
+
+				//leaf node
+				//PTE at address pte.ppn × PAGESIZE + va.vpn[0] × PTESIZE
+				uint32_t pte1_ppn_4k = (pte1 >> 10) << 12;
+				uint32_t pte0_addr = pte1_ppn_4k + (tval & 1024) * 4;
+				uint32_t pte0 = *(uint32_t *)pte0_addr;
+
+				if (pte0 & 1)
+				{
+					//if valid, set A
+					pte0 |= (1 << 6);
+					//and write back
+					*(uint32_t *)pte0_addr = pte0;
+				}
+
+				//i = 0
+				//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i].
+				_m_write_tlb(0, tval_vpn,
+						pte0 >> 10,
+						pte0 & 0xff);
+
+				break;
+			}
+
+			case TrapDataTlbMiss:
+			{
+				//sv32
+				uint32_t satp = csr_read(CSR_SATP);
+				uint32_t satp_ppn = satp & ((1 << 22) - 1);
+				uint32_t satp_ppn_4k = satp_ppn << 12;
+
+				uint32_t tval_vpn = tval >> 12;
+
+				//PTE at address satp.ppn × PAGESIZE + va.vpn[1] × PTESIZE
+				uint32_t pte1_addr = satp_ppn_4k + (tval_vpn >> 10) * 4;
+				uint32_t pte1 = *(uint32_t *)pte1_addr;
+
+				//if superpage OR pte not valid
+				if ((pte1 & 0xe) || ((pte1 & 1) == 0))
+				{
+					//if not valid: write anything
+
+					//if superpage: i = 1, LEVELS = 2
+					//pa.ppn[i − 1 : 0] = va.vpn[i − 1 : 0]
+					//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i]
+
+					if (pte1 & 1)
+					{
+						//if valid, set A
+						pte1 |= (1 << 6);
+						//and write back
+						*(uint32_t *)pte1_addr = pte1;
+					}
+
+					_m_write_tlb(1, tval_vpn,
+						((pte1 >> 20) << 10) | (tval_vpn & 1023),
+						pte1 & 0xff);
+					break;
+				}
+
+				//leaf node
+				//PTE at address pte.ppn × PAGESIZE + va.vpn[0] × PTESIZE
+				uint32_t pte1_ppn_4k = (pte1 >> 10) << 12;
+				uint32_t pte0_addr = pte1_ppn_4k + (tval & 1024) * 4;
+				uint32_t pte0 = *(uint32_t *)pte0_addr;
+
+				if (pte0 & 1)
+				{
+					//if valid, set A
+					pte0 |= (1 << 6);
+					//and write back
+					*(uint32_t *)pte0_addr = pte0;
+				}
+
+				//i = 0
+				//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i].
+				_m_write_tlb(1, tval_vpn,
+						pte0 >> 10,
+						pte0 & 0xff);
+
+				break;
+			}
+		}
+	}
+	else
+	{
+		//interrupt
+	}
+}
+
 asmlinkage void __init setup_vm(uintptr_t dtb_pa)
 {
 	uintptr_t va, pa, end_va;

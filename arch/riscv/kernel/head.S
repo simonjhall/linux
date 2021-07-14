@@ -16,6 +16,32 @@
 
 __HEAD
 ENTRY(_start)
+	//in machine mode
+	csrw CSR_MIE, zero
+	csrw CSR_MIP, zero
+
+	la t3, _m_exception
+	csrw CSR_MTVEC, t3
+
+	//When executing an m RET instruction, supposing m PP holds the value s,
+	//m IE is set to mPIE; the privilege mode is changed to s; mPIE is set to 1;
+	//and mPP is set to U (or M if user-mode is not supported).
+
+	//clear MPP
+	li t3, (3 << 11)
+	csrc CSR_MSTATUS, t3
+
+	//set MPP to 01 (S-mode)
+	li t3, (1 << 11)
+	csrs CSR_MSTATUS, t3
+
+	//clean MPIE
+	li t3, (1 << 7)
+	csrs CSR_MSTATUS, t3
+
+	la a0, _start_kernel
+	csrw CSR_MEPC, a0
+	mret
 	/*
 	 * Image header expected by Linux boot-loaders. The image header data
 	 * structure is described in asm/image.h.
@@ -64,6 +90,178 @@ pe_head_start:
 #else
 	.word 0
 #endif
+
+.align 2
+_m_saved_state:
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+
+_m_trap_stack_start:
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+	.dword 0
+_m_trap_stack_end:
+
+.align 2
+_m_exception:
+	csrw CSR_MSCRATCH, tp
+
+	la tp, _m_saved_state
+
+	sw x1, 4(tp)
+	sw x2, 8(tp)
+	sw x3, 12(tp)
+
+	sw x4, 16(tp)
+	sw x5, 20(tp)
+	sw x6, 24(tp)
+	sw x7, 28(tp)
+
+	sw x8, 32(tp)
+	sw x9, 36(tp)
+	sw x10, 40(tp)
+	sw x11, 44(tp)
+
+	sw x12, 48(tp)
+	sw x13, 52(tp)
+	sw x14, 56(tp)
+	sw x15, 60(tp)
+
+	sw x16, 64(tp)
+	sw x17, 68(tp)
+	sw x18, 72(tp)
+	sw x19, 76(tp)
+
+	sw x20, 80(tp)
+	sw x21, 84(tp)
+	sw x22, 88(tp)
+	sw x23, 92(tp)
+	
+	sw x24, 96(tp)
+	sw x25, 100(tp)
+	sw x26, 104(tp)
+	sw x27, 108(tp)
+
+	sw x28, 112(tp)
+	sw x29, 116(tp)
+	sw x30, 120(tp)
+	sw x31, 124(tp)
+
+	la sp, _m_trap_stack_end
+	addi sp, sp, -8
+	addi fp, sp, 0
+
+	la a0, _m_saved_state
+
+	call _m_exception_c
+
+	lw x1, 4(tp)
+	lw x2, 8(tp)
+	lw x3, 12(tp)
+
+	lw x4, 16(tp)
+	lw x5, 20(tp)
+	lw x6, 24(tp)
+	lw x7, 28(tp)
+
+	lw x8, 32(tp)
+	lw x9, 36(tp)
+	lw x10, 40(tp)
+	lw x11, 44(tp)
+
+	lw x12, 48(tp)
+	lw x13, 52(tp)
+	lw x14, 56(tp)
+	lw x15, 60(tp)
+
+	lw x16, 64(tp)
+	lw x17, 68(tp)
+	lw x18, 72(tp)
+	lw x19, 76(tp)
+
+	lw x20, 80(tp)
+	lw x21, 84(tp)
+	lw x22, 88(tp)
+	lw x23, 92(tp)
+	
+	lw x24, 96(tp)
+	lw x25, 100(tp)
+	lw x26, 104(tp)
+	lw x27, 108(tp)
+
+	lw x28, 112(tp)
+	lw x29, 116(tp)
+	lw x30, 120(tp)
+	lw x31, 124(tp)
+
+	csrr tp, CSR_MSCRATCH
+	mret
 
 .align 2
 #ifdef CONFIG_MMU
@@ -240,6 +438,7 @@ pmp_done:
 	la a3, hart_lottery
 	li a2, 1
 	amoadd.w a3, a2, (a3)
+	#li a3, 0
 	bnez a3, .Lsecondary_start
 
 	/* Clear BSS for flat non-ELF images */
