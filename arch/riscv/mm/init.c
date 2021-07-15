@@ -517,6 +517,30 @@ bool translate_va_pa(uint32_t pa, bool execute, bool read, bool write, uint32_t 
 	return valid;
 }
 
+uint32_t reservation_addr;
+
+uint32_t get_reg(uint32_t *pRegs, uint32_t id)
+{
+	if (id == 0)
+		return 0;
+	else if (id == 4)
+		return csr_read(CSR_MSCRATCH);
+	else
+		return pRegs[id];
+}
+
+void set_reg(uint32_t *pRegs, uint32_t id, uint32_t val)
+{
+	if (id == 0)
+	{
+		//do nothing
+	}
+	else if (id == 4)
+		csr_write(CSR_MSCRATCH, val);
+	else
+		pRegs[id] = val;
+}
+
 asmlinkage void _m_exception_c(uint32_t *pRegs)
 {
 	uint32_t cause = csr_read(CSR_MCAUSE);
@@ -553,13 +577,13 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 							{
 								uint32_t pa;
 								//read and write
-								bool success = translate_va_pa(pRegs[rs1], false, true, true, &pa);
+								bool success = translate_va_pa(get_reg(pRegs, rs1), false, true, true, &pa);
 
 								if (success)
 								{
 									uint32_t original_value = *(uint32_t *)pa;
-									uint32_t new_value = original_value + pRegs[rs2];
-									pRegs[rd] = original_value;
+									uint32_t new_value = original_value + get_reg(pRegs, rs2);
+									set_reg(pRegs, rd, original_value);
 									*(uint32_t *)pa = new_value;
 
 									fall_through = false;
@@ -570,13 +594,113 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 								else
 								{
 									//store page fault at va
-									csr_write(CSR_MTVAL, pRegs[rs1]);
+									csr_write(CSR_MTVAL, get_reg(pRegs, rs1));
 									csr_write(CSR_MCAUSE, (1 << 31) | TrapStorePageFault);
 
 									//now fall through out of TrapIllegalIns
 								}
 								break;		//break from this instruction
-							};
+							}
+							//AMOOR.W
+							case 0b01000:
+							{
+								uint32_t pa;
+								//read and write
+								bool success = translate_va_pa(get_reg(pRegs, rs1), false, true, true, &pa);
+
+								if (success)
+								{
+									uint32_t original_value = *(uint32_t *)pa;
+									uint32_t new_value = original_value | get_reg(pRegs, rs2);
+									set_reg(pRegs, rd, original_value);
+									*(uint32_t *)pa = new_value;
+
+									fall_through = false;
+
+									//move to next instruction
+									csr_write(CSR_MEPC, csr_read(CSR_MEPC) + 4);
+								}
+								else
+								{
+									//store page fault at va
+									csr_write(CSR_MTVAL, get_reg(pRegs, rs1));
+									csr_write(CSR_MCAUSE, (1 << 31) | TrapStorePageFault);
+
+									//now fall through out of TrapIllegalIns
+								}
+								break;		//break from this instruction
+							}
+							//LR.W
+							case 0b00010:
+							{
+								uint32_t pa;
+								//read only
+								bool success = translate_va_pa(get_reg(pRegs, rs1), false, true, false, &pa);
+
+								if (success)
+								{
+									set_reg(pRegs, rd, *(uint32_t *)pa);
+									reservation_addr = get_reg(pRegs, rs1);
+
+									fall_through = false;
+
+									//move to next instruction
+									csr_write(CSR_MEPC, csr_read(CSR_MEPC) + 4);
+								}
+								else
+								{
+									//load page fault at va
+									csr_write(CSR_MTVAL, get_reg(pRegs, rs1));
+									csr_write(CSR_MCAUSE, (1 << 31) | TrapLoadPageFault);
+
+									//now fall through out of TrapIllegalIns
+								}
+								break;		//break from this instruction
+							}
+							//SC.W
+							case 0b00011:
+							{
+								uint32_t pa;
+								//write only
+								bool success = translate_va_pa(get_reg(pRegs, rs1), false, false, true, &pa);
+
+								if (success)
+								{
+									//SC.W conditionally writes a word in rs2 to the address in rs1:
+									//the SC.W succeeds only if the reservation is still valid and
+									//the reservation set contains the bytes being written.
+									//If the SC.W succeeds, the instruction writes the word in rs2
+									//to memory, and it writes zero to rd. If the SC.W fails,
+									//the instruction does not write to memory, and it writes a
+									//nonzero value to rd.
+
+									if (get_reg(pRegs, rs1) == reservation_addr)
+									{
+										//success
+										*(uint32_t *)pa = get_reg(pRegs, rs2);
+										set_reg(pRegs, rd, 0);
+									}
+									else	//failure
+										set_reg(pRegs, rd, 1);
+
+									//token invalidation
+									reservation_addr = -1;
+
+									fall_through = false;
+
+									//move to next instruction
+									csr_write(CSR_MEPC, csr_read(CSR_MEPC) + 4);
+								}
+								else
+								{
+									//store page fault at va
+									csr_write(CSR_MTVAL, get_reg(pRegs, rs1));
+									csr_write(CSR_MCAUSE, (1 << 31) | TrapStorePageFault);
+
+									//now fall through out of TrapIllegalIns
+								}
+								break;		//break from this instruction
+							}
 							default:
 								break;		//did not decode this amo instruction
 						}
