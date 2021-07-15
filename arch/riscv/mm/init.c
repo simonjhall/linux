@@ -408,6 +408,115 @@ asmlinkage void _m_write_tlb(uint32_t id, uint32_t vpn, uint32_t ppn, uint32_t d
 	}
 }
 
+asmlinkage uint32_t _m_load_va(uint32_t addr)
+{
+	//set mprv
+	uint32_t mask = 1 << 17;
+	uint32_t value;
+
+	__asm__ __volatile__ ("	csrs mstatus, %2 \n\
+							lw %1, 0(%0) \n\
+							csrc mstatus, %2 \n"
+						: "=r" (value)
+						: "r" (addr), "r" (mask)
+						: "memory");
+
+	return value;
+}
+
+asmlinkage void _m_store_va(uint32_t addr, uint32_t value)
+{
+	//set mprv
+	uint32_t mask = 1 << 17;
+
+	__asm__ __volatile__ ("	csrs mstatus, %2 \n\
+							sw %1, 0(%0) \n\
+							csrc mstatus, %2 \n"
+						:
+						: "r" (addr), "r" (value), "r" (mask)
+						: "memory");
+}
+
+bool translate_va_pa(uint32_t pa, bool execute, bool read, bool write, uint32_t *pVa)
+{
+	uint32_t satp = csr_read(CSR_SATP);
+
+	//check if translation is enabled
+	if ((satp >> 31) == 0)
+	{
+		//no virtual address translation
+		*pVa = pa;
+		return true;
+	}
+
+	//sv32 implementation
+	uint32_t satp_ppn = satp & ((1 << 22) - 1);
+	uint32_t satp_ppn_4k = satp_ppn << 12;
+
+	uint32_t pa_vpn = pa >> 12;
+
+	//PTE at address satp.ppn × PAGESIZE + va.vpn[1] × PTESIZE
+	uint32_t pte1_addr = satp_ppn_4k + (pa_vpn >> 10) * 4;
+	uint32_t pte1 = *(uint32_t *)pte1_addr;
+
+	//if superpage
+	if (pte1 & 0xe)
+	{
+		//if superpage: i = 1, LEVELS = 2
+		//pa.ppn[i − 1 : 0] = va.vpn[i − 1 : 0]
+		//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i]
+
+		//if valid, set A
+		if (pte1 & 1)
+		{
+			pte1 |= (1 << 6);
+			//and write back
+			*(uint32_t *)pte1_addr = pte1;
+		}
+
+		//check valid and permissions
+		bool valid = (pte1 & 1) ? true : false;
+		if (execute && ((pte1 & 8) == 0))
+			valid = false;
+		if (write && ((pte1 & 4) == 0))
+			valid = false;
+		if (read && ((pte1 & 2) == 0))
+			valid = false;
+
+		*pVa = ((((pte1 >> 20) << 10) | (pa_vpn & 1023)) << 12) | (pa & 4095);
+		return valid;
+	}
+
+	//leaf node
+	//PTE at address pte.ppn × PAGESIZE + va.vpn[0] × PTESIZE
+	uint32_t pte1_ppn_4k = (pte1 >> 10) << 12;
+	uint32_t pte0_addr = pte1_ppn_4k + (pa_vpn & 1023) * 4;
+	uint32_t pte0 = *(uint32_t *)pte0_addr;
+
+	//check permissions
+	bool valid = (pte0 & 1) ? true : false;
+	if (execute && ((pte0 & 8) == 0))
+		valid = false;
+	if (write && ((pte0 & 4) == 0))
+		valid = false;
+	if (read && ((pte0 & 2) == 0))
+		valid = false;
+
+	//if valid, set A
+	if (pte0 & 1)
+	{
+		pte0 |= (1 << 6);
+		//and write back
+		*(uint32_t *)pte0_addr = pte0;
+	}
+
+	//i = 0
+	//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i].
+	*pVa = ((pte0 >> 10) << 12) | (pa & 4095);
+
+	return valid;
+}
+
 asmlinkage void _m_exception_c(uint32_t *pRegs)
 {
 	uint32_t cause = csr_read(CSR_MCAUSE);
@@ -420,9 +529,66 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 		{
 			case TrapIllegalIns:
 			{
-				
-				//fall through if not decoded
-			}
+				bool fall_through = true;
+
+				unsigned int opcode = tval & 127;
+				switch (opcode)
+				{
+					//amo
+					case 0b0101111:
+					{
+						unsigned int rd = (tval >> 7) & 31;
+						unsigned int funct3 = (tval >> 12) & 3;
+						unsigned int rs1 = (tval >> 15) & 31;
+						unsigned int rs2 = (tval >> 20) & 31;
+						unsigned int funct5 = tval >> 27;
+
+						//These AMO instructions atomically load a data value from the address in rs1,
+						//place the value into register rd, apply a binary operator to the loaded value
+						//and the original value in rs2, then store the result back to the address in rs1.	
+						switch (funct5)
+						{
+							//AMOADD.W
+							case 0b00000:
+							{
+								uint32_t pa;
+								//read and write
+								bool success = translate_va_pa(pRegs[rs1], false, true, true, &pa);
+
+								if (success)
+								{
+									uint32_t original_value = *(uint32_t *)pa;
+									uint32_t new_value = original_value + pRegs[rs2];
+									pRegs[rd] = original_value;
+									*(uint32_t *)pa = new_value;
+
+									fall_through = false;
+
+									//move to next instruction
+									csr_write(CSR_MEPC, csr_read(CSR_MEPC) + 4);
+								}
+								else
+								{
+									//store page fault at va
+									csr_write(CSR_MTVAL, pRegs[rs1]);
+									csr_write(CSR_MCAUSE, (1 << 31) | TrapStorePageFault);
+
+									//now fall through out of TrapIllegalIns
+								}
+								break;		//break from this instruction
+							};
+							default:
+								break;		//did not decode this amo instruction
+						}
+						break;				//break from amo
+					}
+					default:
+						break;				//did not decode this class
+				}
+
+				if (!fall_through)
+					break;
+			} /* fall through */
 
 			case TrapInsAddrMisaligned:
 			case TrapInsAccFault:
@@ -517,7 +683,7 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 				//leaf node
 				//PTE at address pte.ppn × PAGESIZE + va.vpn[0] × PTESIZE
 				uint32_t pte1_ppn_4k = (pte1 >> 10) << 12;
-				uint32_t pte0_addr = pte1_ppn_4k + (tval & 1024) * 4;
+				uint32_t pte0_addr = pte1_ppn_4k + (tval_vpn & 1023) * 4;
 				uint32_t pte0 = *(uint32_t *)pte0_addr;
 
 				if (pte0 & 1)
@@ -576,7 +742,7 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 				//leaf node
 				//PTE at address pte.ppn × PAGESIZE + va.vpn[0] × PTESIZE
 				uint32_t pte1_ppn_4k = (pte1 >> 10) << 12;
-				uint32_t pte0_addr = pte1_ppn_4k + (tval & 1024) * 4;
+				uint32_t pte0_addr = pte1_ppn_4k + (tval_vpn & 1023) * 4;
 				uint32_t pte0 = *(uint32_t *)pte0_addr;
 
 				if (pte0 & 1)
