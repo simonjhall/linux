@@ -541,6 +541,11 @@ void set_reg(uint32_t *pRegs, uint32_t id, uint32_t val)
 		pRegs[id] = val;
 }
 
+int _m_divdi3(int a, int b);
+unsigned int _m_udivdi3(unsigned int a, unsigned int b);
+int _m_umoddi3(int a, int b);
+unsigned int _m_moddi3(unsigned int a, unsigned int b);
+
 asmlinkage void _m_exception_c(uint32_t *pRegs)
 {
 	uint32_t cause = csr_read(CSR_MCAUSE);
@@ -558,6 +563,59 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 				unsigned int opcode = tval & 127;
 				switch (opcode)
 				{
+					//op, to be shared with op-32
+					case 0b0110011:
+					{
+						unsigned int rd = (tval >> 7) & 31;
+						unsigned int funct3 = (tval >> 12) & 7;
+						unsigned int rs1 = (tval >> 15) & 31;
+						unsigned int rs2 = (tval >> 20) & 31;
+						unsigned int funct7 = tval >> 25;
+
+						switch (funct7)
+						{
+							//muldiv
+							case 0b0000001:
+							{
+								switch (funct3)
+								{
+									//div
+									case 0b100:
+									{
+										set_reg(pRegs, rd, _m_divdi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
+										fall_through = false;
+										break;
+									}
+									//divu
+									case 0b101:
+									{
+										set_reg(pRegs, rd, _m_udivdi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
+										fall_through = false;
+										break;
+									}
+									//rem
+									case 0b110:
+									{
+										set_reg(pRegs, rd, _m_moddi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
+										fall_through = false;
+										break;
+									}
+									//remu
+									case 0b111:
+									{
+										set_reg(pRegs, rd, _m_umoddi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
+										fall_through = false;
+										break;
+									}
+									default:
+										break;	//did not match the instruction
+								}
+							}
+							default:
+								break;		//did not decode this major class
+						}
+						break;				//break from op
+					}
 					//amo
 					case 0b0101111:
 					{
@@ -587,9 +645,6 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 									*(uint32_t *)pa = new_value;
 
 									fall_through = false;
-
-									//move to next instruction
-									csr_write(CSR_MEPC, csr_read(CSR_MEPC) + 4);
 								}
 								else
 								{
@@ -616,9 +671,6 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 									*(uint32_t *)pa = new_value;
 
 									fall_through = false;
-
-									//move to next instruction
-									csr_write(CSR_MEPC, csr_read(CSR_MEPC) + 4);
 								}
 								else
 								{
@@ -643,9 +695,6 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 									reservation_addr = get_reg(pRegs, rs1);
 
 									fall_through = false;
-
-									//move to next instruction
-									csr_write(CSR_MEPC, csr_read(CSR_MEPC) + 4);
 								}
 								else
 								{
@@ -687,9 +736,6 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 									reservation_addr = -1;
 
 									fall_through = false;
-
-									//move to next instruction
-									csr_write(CSR_MEPC, csr_read(CSR_MEPC) + 4);
 								}
 								else
 								{
@@ -711,7 +757,11 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 				}
 
 				if (!fall_through)
+				{
+					//move to next instruction
+					csr_write(CSR_MEPC, csr_read(CSR_MEPC) + 4);
 					break;
+				}
 			} /* fall through */
 
 			case TrapInsAddrMisaligned:

@@ -13,6 +13,8 @@ CFLAGS_syscall_table.o	+= $(call cc-option,-Wno-override-init,)
 extra-y += head.o
 extra-y += vmlinux.lds
 
+obj-y	+= div.o
+
 obj-y	+= soc.o
 obj-y	+= cpu.o
 obj-y	+= cpufeature.o
