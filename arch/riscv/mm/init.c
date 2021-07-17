@@ -392,18 +392,18 @@ enum TrapCause
 	TrapDataTlbMiss			=	25,
 };
 
-asmlinkage void _m_write_tlb(uint32_t id, uint32_t vpn, uint32_t ppn, uint32_t daguxwrv)
+asmlinkage void _m_write_tlb(uint32_t id, uint32_t vpn, uint32_t ppn, uint32_t daguxwrv, uint32_t super)
 {
-	//{r_tlb_ppn[0], r_tlb_daguxwrv[0], r_tlb_valid[0]} <= r_csrRead[30:0];
+	//{r_tlb_ppn[0], r_tlb_daguxwrv[0], r_tlb_super[0], r_tlb_valid[0]} <= r_csrRead[30:0];
 	//r_tlb_vpn[0] <= r_csrRead[19:0];
 	if (id == 0)
 	{
-		csr_write(0x7c0, (ppn << 9) | (daguxwrv << 1) | 1);
+		csr_write(0x7c0, (ppn << 10) | (daguxwrv << 2) | (super << 1) | 1);
 		csr_write(0x7c1, vpn);
 	}
 	else
 	{
-		csr_write(0x7c2, (ppn << 9) | (daguxwrv << 1) | 1);
+		csr_write(0x7c2, (ppn << 10) | (daguxwrv << 2) | (super << 1) | 1);
 		csr_write(0x7c3, vpn);
 	}
 }
@@ -848,9 +848,10 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 						*(uint32_t *)pte1_addr = pte1;
 					}
 
-					_m_write_tlb(0, tval_vpn,
-						((pte1 >> 20) << 10) | (tval_vpn & 1023),
-						pte1 & 0xff);
+					_m_write_tlb(0, tval_vpn & ~1023,
+						(pte1 >> 20) << 10,
+						pte1 & 0xff,
+						1);
 					break;
 				}
 
@@ -872,7 +873,8 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 				//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i].
 				_m_write_tlb(0, tval_vpn,
 						pte0 >> 10,
-						pte0 & 0xff);
+						pte0 & 0xff,
+						0);
 
 				break;
 			}
@@ -907,9 +909,10 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 						*(uint32_t *)pte1_addr = pte1;
 					}
 
-					_m_write_tlb(1, tval_vpn,
-						((pte1 >> 20) << 10) | (tval_vpn & 1023),
-						pte1 & 0xff);
+					_m_write_tlb(1, tval_vpn & ~1023,
+						(pte1 >> 20) << 10,
+						pte1 & 0xff,
+						1);
 					break;
 				}
 
@@ -931,7 +934,8 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 				//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i].
 				_m_write_tlb(1, tval_vpn,
 						pte0 >> 10,
-						pte0 & 0xff);
+						pte0 & 0xff,
+						0);
 
 				break;
 			}
