@@ -61,4 +61,8 @@ config SOC_CANAAN_K210_DTB_SOURCE
 
 endif
 
+config SOC_SIMON
+	bool "My SoC"
+	select BUILTIN_DTB
+
 endmenu
