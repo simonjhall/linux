@@ -392,20 +392,20 @@ enum TrapCause
 	TrapDataTlbMiss			=	25,
 };
 
-asmlinkage void _m_write_tlb(uint32_t id, uint32_t vpn, uint32_t ppn, uint32_t daguxwrv, uint32_t super)
+asmlinkage void _m_write_tlb(uint32_t id, uint32_t entry, uint32_t vpn, uint32_t ppn, uint32_t daguxwrv, uint32_t super)
 {
+	const unsigned int kTlbEntriesBits = 2;
+	const unsigned int kTlbEntries = 1 << kTlbEntriesBits;
+	const unsigned int kTlbEntriesMask = kTlbEntries - 1;
+
 	//{r_tlb_ppn[0], r_tlb_daguxwrv[0], r_tlb_super[0], r_tlb_valid[0]} <= r_csrRead[30:0];
 	//r_tlb_vpn[0] <= r_csrRead[19:0];
-	if (id == 0)
-	{
-		csr_write(0x7c0, (ppn << 10) | (daguxwrv << 2) | (super << 1) | 1);
-		csr_write(0x7c1, vpn);
-	}
-	else
-	{
-		csr_write(0x7c2, (ppn << 10) | (daguxwrv << 2) | (super << 1) | 1);
-		csr_write(0x7c3, vpn);
-	}
+	//r_tlb_entry_select <= r_csrRead[something:1]
+	//r_tlb_data_or_insn <= r_csrRead[0]
+
+	csr_write(0x7c0, ((entry & kTlbEntriesMask) << 1) | (id == 0 ? 0 : 1));
+	csr_write(0x7c1, (ppn << 10) | (daguxwrv << 2) | (super << 1) | 1);
+	csr_write(0x7c2, (vpn & 0xfffff));
 }
 
 asmlinkage uint32_t _m_load_va(uint32_t addr)
@@ -518,6 +518,7 @@ bool translate_va_pa(uint32_t pa, bool execute, bool read, bool write, uint32_t 
 }
 
 uint32_t reservation_addr;
+uint32_t tlb_entry;
 
 uint32_t get_reg(uint32_t *pRegs, uint32_t id)
 {
@@ -819,66 +820,6 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 				break;
 
 			case TrapInstTlbMiss:
-			{
-				//sv32
-				uint32_t satp = csr_read(CSR_SATP);
-				uint32_t satp_ppn = satp & ((1 << 22) - 1);
-				uint32_t satp_ppn_4k = satp_ppn << 12;
-
-				uint32_t tval_vpn = tval >> 12;
-
-				//PTE at address satp.ppn × PAGESIZE + va.vpn[1] × PTESIZE
-				uint32_t pte1_addr = satp_ppn_4k + (tval_vpn >> 10) * 4;
-				uint32_t pte1 = *(uint32_t *)pte1_addr;
-
-				//if superpage OR pte not valid
-				if ((pte1 & 0xe) || ((pte1 & 1) == 0))
-				{
-					//if not valid: write anything
-
-					//if superpage: i = 1, LEVELS = 2
-					//pa.ppn[i − 1 : 0] = va.vpn[i − 1 : 0]
-					//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i]
-
-					if (pte1 & 1)
-					{
-						//if valid, set A
-						pte1 |= (1 << 6);
-						//and write back
-						*(uint32_t *)pte1_addr = pte1;
-					}
-
-					_m_write_tlb(0, tval_vpn & ~1023,
-						(pte1 >> 20) << 10,
-						pte1 & 0xff,
-						1);
-					break;
-				}
-
-				//leaf node
-				//PTE at address pte.ppn × PAGESIZE + va.vpn[0] × PTESIZE
-				uint32_t pte1_ppn_4k = (pte1 >> 10) << 12;
-				uint32_t pte0_addr = pte1_ppn_4k + (tval_vpn & 1023) * 4;
-				uint32_t pte0 = *(uint32_t *)pte0_addr;
-
-				if (pte0 & 1)
-				{
-					//if valid, set A
-					pte0 |= (1 << 6);
-					//and write back
-					*(uint32_t *)pte0_addr = pte0;
-				}
-
-				//i = 0
-				//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i].
-				_m_write_tlb(0, tval_vpn,
-						pte0 >> 10,
-						pte0 & 0xff,
-						0);
-
-				break;
-			}
-
 			case TrapDataTlbMiss:
 			{
 				//sv32
@@ -892,6 +833,9 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 				uint32_t pte1_addr = satp_ppn_4k + (tval_vpn >> 10) * 4;
 				uint32_t pte1 = *(uint32_t *)pte1_addr;
 
+				unsigned int data_or_insn = (cause & 31) == TrapInstTlbMiss ? 0 : 1;
+				unsigned int entry = tlb_entry++;
+
 				//if superpage OR pte not valid
 				if ((pte1 & 0xe) || ((pte1 & 1) == 0))
 				{
@@ -909,7 +853,8 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 						*(uint32_t *)pte1_addr = pte1;
 					}
 
-					_m_write_tlb(1, tval_vpn & ~1023,
+					_m_write_tlb(data_or_insn, entry,
+						tval_vpn & ~1023,
 						(pte1 >> 20) << 10,
 						pte1 & 0xff,
 						1);
@@ -932,10 +877,11 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 
 				//i = 0
 				//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i].
-				_m_write_tlb(1, tval_vpn,
-						pte0 >> 10,
-						pte0 & 0xff,
-						0);
+				_m_write_tlb(data_or_insn, entry,
+					tval_vpn,
+					pte0 >> 10,
+					pte0 & 0xff,
+					0);
 
 				break;
 			}
