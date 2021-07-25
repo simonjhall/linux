@@ -31,7 +31,7 @@
 			compatible = "riscv";
 			reg = <0>;
 			riscv,isa = "rv32imafdc";
-			mmu-type = "riscv,sv39";
+			mmu-type = "riscv,sv32";
 			cpu0_intc: interrupt-controller {
 				#interrupt-cells = <1>;
 				interrupt-controller;
