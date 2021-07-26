@@ -408,35 +408,6 @@ asmlinkage void _m_write_tlb(uint32_t id, uint32_t entry, uint32_t vpn, uint32_t
 	csr_write(0x7c2, (vpn & 0xfffff));
 }
 
-asmlinkage uint32_t _m_load_va(uint32_t addr)
-{
-	//set mprv
-	uint32_t mask = 1 << 17;
-	uint32_t value;
-
-	__asm__ __volatile__ ("	csrs mstatus, %2 \n\
-							lw %1, 0(%0) \n\
-							csrc mstatus, %2 \n"
-						: "=r" (value)
-						: "r" (addr), "r" (mask)
-						: "memory");
-
-	return value;
-}
-
-asmlinkage void _m_store_va(uint32_t addr, uint32_t value)
-{
-	//set mprv
-	uint32_t mask = 1 << 17;
-
-	__asm__ __volatile__ ("	csrs mstatus, %2 \n\
-							sw %1, 0(%0) \n\
-							csrc mstatus, %2 \n"
-						:
-						: "r" (addr), "r" (value), "r" (mask)
-						: "memory");
-}
-
 bool translate_va_pa(uint32_t pa, bool execute, bool read, bool write, uint32_t *pVa)
 {
 	uint32_t satp = csr_read(CSR_SATP);
@@ -547,6 +518,58 @@ unsigned int _m_udivdi3(unsigned int a, unsigned int b);
 int _m_umoddi3(int a, int b);
 unsigned int _m_moddi3(unsigned int a, unsigned int b);
 
+static uint32_t amo_add(uint32_t original, uint32_t incoming)
+{
+	return original + incoming;
+}
+
+static uint32_t amo_and(uint32_t original, uint32_t incoming)
+{
+	return original & incoming;
+}
+
+static uint32_t amo_swap(uint32_t original, uint32_t incoming)
+{
+	return incoming;
+}
+
+static uint32_t amo_or(uint32_t original, uint32_t incoming)
+{
+	return original | incoming;
+}
+
+static uint32_t amo_xor(uint32_t original, uint32_t incoming)
+{
+	return original ^ incoming;
+}
+
+static bool amo_op(uint32_t *pRegs, unsigned int rd, unsigned int rs1, unsigned int rs2,
+	uint32_t (*op)(uint32_t, uint32_t))
+{
+	uint32_t pa;
+	//read and write
+	bool success = translate_va_pa(get_reg(pRegs, rs1), false, true, true, &pa);
+
+	if (success)
+	{
+		uint32_t original_value = *(uint32_t *)pa;
+		uint32_t new_value = op(original_value, get_reg(pRegs, rs2));
+		set_reg(pRegs, rd, original_value);
+		*(uint32_t *)pa = new_value;
+
+		return true;
+	}
+	else
+	{
+		//store page fault at va
+		csr_write(CSR_MTVAL, get_reg(pRegs, rs1));
+		csr_write(CSR_MCAUSE, (1 << 31) | TrapStorePageFault);
+
+		//now fall through out of TrapIllegalIns
+		return false;
+	}
+}
+
 asmlinkage void _m_exception_c(uint32_t *pRegs)
 {
 	uint32_t cause = csr_read(CSR_MCAUSE);
@@ -631,56 +654,44 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 						//and the original value in rs2, then store the result back to the address in rs1.	
 						switch (funct5)
 						{
+							//AMOSWAP.W
+							case 0b00001:
+							{
+								if (amo_op(pRegs, rd, rs1, rs2, &amo_swap))
+									fall_through = false;
+
+								break;		//break from this instruction
+							}
 							//AMOADD.W
 							case 0b00000:
 							{
-								uint32_t pa;
-								//read and write
-								bool success = translate_va_pa(get_reg(pRegs, rs1), false, true, true, &pa);
-
-								if (success)
-								{
-									uint32_t original_value = *(uint32_t *)pa;
-									uint32_t new_value = original_value + get_reg(pRegs, rs2);
-									set_reg(pRegs, rd, original_value);
-									*(uint32_t *)pa = new_value;
-
+								if (amo_op(pRegs, rd, rs1, rs2, &amo_add))
 									fall_through = false;
-								}
-								else
-								{
-									//store page fault at va
-									csr_write(CSR_MTVAL, get_reg(pRegs, rs1));
-									csr_write(CSR_MCAUSE, (1 << 31) | TrapStorePageFault);
 
-									//now fall through out of TrapIllegalIns
-								}
+								break;		//break from this instruction
+							}
+							//AMOXOR.W
+							case 0b00100:
+							{
+								if (amo_op(pRegs, rd, rs1, rs2, &amo_xor))
+									fall_through = false;
+
+								break;		//break from this instruction
+							}
+							//AMOAND.W
+							case 0b01100:
+							{
+								if (amo_op(pRegs, rd, rs1, rs2, &amo_and))
+									fall_through = false;
+
 								break;		//break from this instruction
 							}
 							//AMOOR.W
 							case 0b01000:
 							{
-								uint32_t pa;
-								//read and write
-								bool success = translate_va_pa(get_reg(pRegs, rs1), false, true, true, &pa);
-
-								if (success)
-								{
-									uint32_t original_value = *(uint32_t *)pa;
-									uint32_t new_value = original_value | get_reg(pRegs, rs2);
-									set_reg(pRegs, rd, original_value);
-									*(uint32_t *)pa = new_value;
-
+								if (amo_op(pRegs, rd, rs1, rs2, &amo_or))
 									fall_through = false;
-								}
-								else
-								{
-									//store page fault at va
-									csr_write(CSR_MTVAL, get_reg(pRegs, rs1));
-									csr_write(CSR_MCAUSE, (1 << 31) | TrapStorePageFault);
 
-									//now fall through out of TrapIllegalIns
-								}
 								break;		//break from this instruction
 							}
 							//LR.W
@@ -773,7 +784,6 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 			case TrapStoreMisaligned:
 			case TrapStoreFault:
 			case TrapUserCall:
-			case TrapSuperCall:
 			case TrapInsPageFault:
 			case TrapLoadPageFault:
 			case TrapStorePageFault:
@@ -815,6 +825,44 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 				break;
 			}
 
+			//call from supervisor code
+			case TrapSuperCall:
+			{
+				switch (get_reg(pRegs, 17))
+				{
+					//base extension
+					case 0x10:
+					{
+						switch (get_reg(pRegs, 16))
+						{
+							//get spec version
+							case 0x0:
+							{
+								set_reg(pRegs, 10, 0);		//SBI_SUCCESS
+								set_reg(pRegs, 11, (0 << 24) | 2);
+								break;
+							}
+							default:
+							{
+								set_reg(pRegs, 10, -2);		//SBI_ERR_NOT_SUPPORTED
+								break;
+							}
+						}
+						break;
+					}
+					default:
+					{
+						set_reg(pRegs, 10, -2);		//SBI_ERR_NOT_SUPPORTED
+						break;
+					}
+				}
+
+				//move to next instruction
+				csr_write(CSR_MEPC, csr_read(CSR_MEPC) + 4);
+				break;
+			}
+
+			//call from machine code
 			case TrapMachineCall:
 				//do something
 				break;
