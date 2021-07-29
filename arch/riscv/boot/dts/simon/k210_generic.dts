@@ -16,7 +16,7 @@
 	compatible = "canaan,kendryte-k210";
 
 	chosen {
-		bootargs = "earlycon";
+		bootargs = "";
 		/*stdout-path = "serial0:115200n8";*/
 	};
 };
