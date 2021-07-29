@@ -37,7 +37,7 @@
 
 
 static void mvme147_get_model(char *model);
-extern void mvme147_sched_init(void);
+extern void mvme147_sched_init(irq_handler_t handler);
 extern int mvme147_hwclk (int, struct rtc_time *);
 extern void mvme147_reset (void);
 
@@ -126,7 +126,7 @@ static irqreturn_t mvme147_timer_int (int irq, void *dev_id)
 }
 
 
-void mvme147_sched_init (void)
+void mvme147_sched_init (irq_handler_t timer_routine)
 {
 	if (request_irq(PCC_IRQ_TIMER1, mvme147_timer_int, IRQF_TIMER,
 			"timer 1", NULL))

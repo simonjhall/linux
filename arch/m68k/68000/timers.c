@@ -91,7 +91,7 @@ static struct clocksource m68328_clk = {
 
 /***************************************************************************/
 
-void hw_timer_init(void)
+void hw_timer_init(irq_handler_t handler)
 {
 	int ret;
 

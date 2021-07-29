@@ -590,7 +590,7 @@ static irqreturn_t via_timer_handler(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-void __init via_init_clock(void)
+void __init via_init_clock(irq_handler_t timer_routine)
 {
 	if (request_irq(IRQ_MAC_TIMER_1, via_timer_handler, IRQF_TIMER, "timer",
 			NULL)) {

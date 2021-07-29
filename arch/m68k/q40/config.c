@@ -37,7 +37,7 @@
 
 extern void q40_init_IRQ(void);
 static void q40_get_model(char *model);
-extern void q40_sched_init(void);
+extern void q40_sched_init(irq_handler_t handler);
 
 static int q40_hwclk(int, struct rtc_time *);
 static unsigned int q40_get_ss(void);
