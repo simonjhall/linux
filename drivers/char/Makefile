@@ -47,3 +47,9 @@ obj-$(CONFIG_PS3_FLASH)		+= ps3flash.o
 obj-$(CONFIG_XILLYBUS)		+= xillybus/
 obj-$(CONFIG_POWERNV_OP_PANEL)	+= powernv-op-panel.o
 obj-$(CONFIG_ADI)		+= adi.o
+
+obj-$(CONFIG_REDUX) += ft245.o
+obj-$(CONFIG_VM68K) += ft245.o
+
+obj-$(CONFIG_SOC_REDUX) += ft245.o
+obj-$(CONFIG_SOC_VMRISCV) += ft245.o

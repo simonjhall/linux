@@ -70,3 +70,6 @@ obj-$(CONFIG_KEYBOARD_TEGRA)		+= tegra-kbc.o
 obj-$(CONFIG_KEYBOARD_TM2_TOUCHKEY)	+= tm2-touchkey.o
 obj-$(CONFIG_KEYBOARD_TWL4030)		+= twl4030_keypad.o
 obj-$(CONFIG_KEYBOARD_XTKBD)		+= xtkbd.o
+
+obj-$(CONFIG_REDUX) += m68k_ser_keybmouse.o
+obj-$(CONFIG_VM68K) += m68k_ser_keybmouse.o

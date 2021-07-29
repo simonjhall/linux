@@ -17,6 +17,8 @@ extern void mvme16x_cons_write(struct console *co,
 
 asmlinkage void __init debug_cons_nputs(const char *s, unsigned n);
 
+int ft245_write(const char *buf, int n);
+
 static void __ref debug_cons_write(struct console *c,
 				   const char *s, unsigned n)
 {
@@ -26,6 +28,13 @@ static void __ref debug_cons_write(struct console *c,
 		mvme16x_cons_write(c, s, n);
 	else
 		debug_cons_nputs(s, n);
+#endif
+
+#if defined(CONFIG_vM68K) || defined(CONFIG_REDUX) || defined(CONFIG_SOC_VMRISCV) || defined(CONFIG_SOC_REDUX)
+	while (n)
+	{
+		n -= ft245_write(s, n);
+	}
 #endif
 }
 

@@ -145,16 +145,15 @@ static int simplefb_parse_dt(struct platform_device *pdev,
 static int simplefb_parse_pd(struct platform_device *pdev,
 			     struct simplefb_params *params)
 {
-	struct simplefb_platform_data *pd = dev_get_platdata(&pdev->dev);
 	int i;
 
-	params->width = pd->width;
-	params->height = pd->height;
-	params->stride = pd->stride;
+	params->width = 1024;
+	params->height = 768;
+	params->stride = 2 * params->width;
 
 	params->format = NULL;
 	for (i = 0; i < ARRAY_SIZE(simplefb_formats); i++) {
-		if (strcmp(pd->format, simplefb_formats[i].name))
+		if (strcmp("x1r5g5b5", simplefb_formats[i].name))
 			continue;
 
 		params->format = &simplefb_formats[i];
@@ -405,25 +404,31 @@ static int simplefb_probe(struct platform_device *pdev)
 	struct simplefb_params params;
 	struct fb_info *info;
 	struct simplefb_par *par;
-	struct resource *mem;
+
+	struct resource _mem = {
+		.name = "framebuffer",
+#if defined CONFIG_REDUX || defined CONFIG_SOC_REDUX
+		//real board
+		.start	= 0x17c00000,
+		.end	= 0x18000000-1,
+#endif
+#if defined CONFIG_VM68K || defined CONFIG_SOC_VMRISCV
+		//fake board
+		.start = 0x50000000,
+		.end = 0x50000000 + 4*1024*1024 - 1,
+#endif
+		.flags = IORESOURCE_MEM
+	};
+	struct resource *mem = &_mem;
 
 	if (fb_get_options("simplefb", NULL))
 		return -ENODEV;
 
 	ret = -ENODEV;
-	if (dev_get_platdata(&pdev->dev))
-		ret = simplefb_parse_pd(pdev, &params);
-	else if (pdev->dev.of_node)
-		ret = simplefb_parse_dt(pdev, &params);
+	ret = simplefb_parse_pd(pdev, &params);
 
 	if (ret)
 		return ret;
-
-	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!mem) {
-		dev_err(&pdev->dev, "No memory resource\n");
-		return -EINVAL;
-	}
 
 	info = framebuffer_alloc(sizeof(struct simplefb_par), &pdev->dev);
 	if (!info)
@@ -516,20 +521,15 @@ static int simplefb_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static const struct of_device_id simplefb_of_match[] = {
-	{ .compatible = "simple-framebuffer", },
-	{ },
-};
-MODULE_DEVICE_TABLE(of, simplefb_of_match);
-
 static struct platform_driver simplefb_driver = {
 	.driver = {
-		.name = "simple-framebuffer",
-		.of_match_table = simplefb_of_match,
+		.name = "simplefb",
 	},
 	.probe = simplefb_probe,
 	.remove = simplefb_remove,
 };
+
+static struct platform_device *simplefb_device;
 
 static int __init simplefb_init(void)
 {
@@ -539,11 +539,18 @@ static int __init simplefb_init(void)
 	ret = platform_driver_register(&simplefb_driver);
 	if (ret)
 		return ret;
+	
+	if (!ret) {
+		simplefb_device = platform_device_alloc("simplefb", 0);
 
-	if (IS_ENABLED(CONFIG_OF_ADDRESS) && of_chosen) {
-		for_each_child_of_node(of_chosen, np) {
-			if (of_device_is_compatible(np, "simple-framebuffer"))
-				of_platform_device_create(np, NULL, NULL);
+		if (simplefb_device)
+			ret = platform_device_add(simplefb_device);
+		else
+			ret = -ENOMEM;
+
+		if (ret) {
+			platform_device_put(simplefb_device);
+			platform_driver_unregister(&simplefb_driver);
 		}
 	}
 

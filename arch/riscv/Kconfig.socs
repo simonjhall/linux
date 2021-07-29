@@ -61,8 +61,12 @@ config SOC_CANAAN_K210_DTB_SOURCE
 
 endif
 
-config SOC_SIMON
-	bool "My SoC"
+config SOC_REDUX
+	bool "REDUX SoC"
+	select BUILTIN_DTB
+
+config SOC_VMRISCV
+	bool "VM SoC"
 	select BUILTIN_DTB
 
 endmenu

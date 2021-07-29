@@ -78,7 +78,9 @@ unsigned long m68k_memoffset;
 struct m68k_mem_info m68k_memory[NUM_MEMINFO];
 EXPORT_SYMBOL(m68k_memory);
 
+#ifdef CONFIG_BLK_DEV_INITRD
 static struct m68k_mem_info m68k_ramdisk __initdata;
+#endif
 
 static char m68k_command_line[CL_SIZE] __initdata;
 
@@ -141,76 +143,22 @@ extern void paging_init(void);
 
 static void __init m68k_parse_bootinfo(const struct bi_record *record)
 {
-	uint16_t tag;
-
 	save_bootinfo(record);
+	
+	//redux
+	m68k_memory[m68k_num_memory].addr = 0x10000000;
+#ifdef CONFIG_REDUX
+	//real amount
+	m68k_memory[m68k_num_memory].size = 124 * 1024 * 1024;
+#endif
+	//fake amount
+#ifdef CONFIG_VM68K
+	m68k_memory[m68k_num_memory].size = 1024 * 1024 * 1024;
+#endif
 
-	while ((tag = be16_to_cpu(record->tag)) != BI_LAST) {
-		int unknown = 0;
-		const void *data = record->data;
-		uint16_t size = be16_to_cpu(record->size);
+	
+	m68k_num_memory++;
 
-		switch (tag) {
-		case BI_MACHTYPE:
-		case BI_CPUTYPE:
-		case BI_FPUTYPE:
-		case BI_MMUTYPE:
-			/* Already set up by head.S */
-			break;
-
-		case BI_MEMCHUNK:
-			if (m68k_num_memory < NUM_MEMINFO) {
-				const struct mem_info *m = data;
-				m68k_memory[m68k_num_memory].addr =
-					be32_to_cpu(m->addr);
-				m68k_memory[m68k_num_memory].size =
-					be32_to_cpu(m->size);
-				m68k_num_memory++;
-			} else
-				pr_warn("%s: too many memory chunks\n",
-					__func__);
-			break;
-
-		case BI_RAMDISK:
-			{
-				const struct mem_info *m = data;
-				m68k_ramdisk.addr = be32_to_cpu(m->addr);
-				m68k_ramdisk.size = be32_to_cpu(m->size);
-			}
-			break;
-
-		case BI_COMMAND_LINE:
-			strlcpy(m68k_command_line, data,
-				sizeof(m68k_command_line));
-			break;
-
-		default:
-			if (MACH_IS_AMIGA)
-				unknown = amiga_parse_bootinfo(record);
-			else if (MACH_IS_ATARI)
-				unknown = atari_parse_bootinfo(record);
-			else if (MACH_IS_MAC)
-				unknown = mac_parse_bootinfo(record);
-			else if (MACH_IS_Q40)
-				unknown = q40_parse_bootinfo(record);
-			else if (MACH_IS_BVME6000)
-				unknown = bvme6000_parse_bootinfo(record);
-			else if (MACH_IS_MVME16x)
-				unknown = mvme16x_parse_bootinfo(record);
-			else if (MACH_IS_MVME147)
-				unknown = mvme147_parse_bootinfo(record);
-			else if (MACH_IS_HP300)
-				unknown = hp300_parse_bootinfo(record);
-			else if (MACH_IS_APOLLO)
-				unknown = apollo_parse_bootinfo(record);
-			else
-				unknown = 1;
-		}
-		if (unknown)
-			pr_warn("%s: unknown tag 0x%04x ignored\n", __func__,
-				tag);
-		record = (struct bi_record *)((unsigned long)record + size);
-	}
 
 	m68k_realnum_memory = m68k_num_memory;
 #ifdef CONFIG_SINGLE_MEMORY_CHUNK
@@ -220,6 +168,11 @@ static void __init m68k_parse_bootinfo(const struct bi_record *record)
 		m68k_num_memory = 1;
 	}
 #endif
+}
+
+void power_off_reset(void)
+{
+	__asm__ volatile ("reset");
 }
 
 void __init setup_arch(char **cmdline_p)
@@ -338,8 +291,10 @@ void __init setup_arch(char **cmdline_p)
 		break;
 #endif
 	default:
-		panic("No configuration setup");
+		config_BSP(NULL, 0);
 	}
+	
+	mach_power_off = power_off_reset;
 
 	paging_init();
 
@@ -459,16 +414,20 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 
 	clockfreq = loops_per_jiffy * HZ * clockfactor;
 
-	seq_printf(m, "CPU:\t\t%s\n"
-		   "MMU:\t\t%s\n"
-		   "FPU:\t\t%s\n"
-		   "Clocking:\t%lu.%1luMHz\n"
-		   "BogoMips:\t%lu.%02lu\n"
-		   "Calibration:\t%lu loops\n",
-		   cpu, mmu, fpu,
-		   clockfreq/1000000,(clockfreq/100000)%10,
-		   loops_per_jiffy/(500000/HZ),(loops_per_jiffy/(5000/HZ))%100,
-		   loops_per_jiffy);
+	seq_printf(m,
+		"processor:\t0\n"
+		"vendor:\tMotorola\n"
+		"model name:\t%s\n"
+		"fpu:\t\t%s\n"
+		"mmu:\t\t%s\n"
+		"cpu MHz:\t%lu.%1lu\n"
+		"bogomips:\t%lu.%02lu\n"
+		"calibration:\t%lu\n",
+		cpu, fpu, mmu,
+		clockfreq/1000000,(clockfreq/100000)%10,
+		loops_per_jiffy/(500000/HZ),(loops_per_jiffy/(5000/HZ))%100,
+		loops_per_jiffy);
+
 	return 0;
 }
 

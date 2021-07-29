@@ -42,6 +42,16 @@ EXPORT_SYMBOL_GPL(mach_random_get_entropy);
  */
 static irqreturn_t timer_interrupt(int irq, void *dummy)
 {
+	//todo - find a better place
+#if defined(CONFIG_REDUX) || defined(CONFIG_VM68K)
+#define BASE_ADDRESS 0xf0000000
+#define INT_CLEAR_OFFSET 0x600
+
+	//clear the level interrupt
+	volatile unsigned int *pClear = (volatile unsigned int *)(BASE_ADDRESS + INT_CLEAR_OFFSET);
+	*pClear = 0;
+#endif
+
 	xtime_update(1);
 	update_process_times(user_mode(get_irq_regs()));
 	profile_tick(CPU_PROFILING);

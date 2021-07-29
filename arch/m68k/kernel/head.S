@@ -272,7 +272,7 @@
 #endif
 
 #ifdef CONFIG_EARLY_PRINTK
-#  define SERIAL_DEBUG
+#  //define SERIAL_DEBUG
 #  if defined(CONFIG_MAC) && defined(CONFIG_FONT_SUPPORT)
 #    define CONSOLE_DEBUG
 #  endif
@@ -281,6 +281,11 @@
 #undef MMU_PRINT
 #undef MMU_NOCACHE_KERNEL
 #undef DEBUG
+
+//redux/origins
+//#define SERIAL_DEBUG
+//#define MMU_PRINT
+//#define DEBUG
 
 /*
  * For the head.S console, there are three supported fonts, 6x11, 8x16 and 8x8.
@@ -598,22 +603,42 @@ ENTRY(__start)
 /*
  * Record the CPU and machine type.
  */
-	get_bi_record	BI_MACHTYPE
-	lea	%pc@(m68k_machtype),%a1
-	movel	%a0@,%a1@
-
-	get_bi_record	BI_FPUTYPE
-	lea	%pc@(m68k_fputype),%a1
-	movel	%a0@,%a1@
-
-	get_bi_record	BI_MMUTYPE
-	lea	%pc@(m68k_mmutype),%a1
-	movel	%a0@,%a1@
-
-	get_bi_record	BI_CPUTYPE
-	lea	%pc@(m68k_cputype),%a1
-	movel	%a0@,%a1@
-
+ 	lea	%pc@(m68k_machtype),%a1
+ 	movel	#0, %a1@
+ 	
+ 	lea	%pc@(m68k_fputype),%a1
+ #ifdef CONFIG_VM68K
+ 	//68882
+ 	//movel	#2, %a1@
+ 	//68040
+ 	movel	#4, %a1@
+ #endif
+ #ifdef CONFIG_REDUX
+ 	movel	#4, %a1@
+ #endif
+ 	
+ 	lea	%pc@(m68k_mmutype),%a1
+ #ifdef CONFIG_VM68K
+ 	//68030
+ 	//movel	#2, %a1@
+ 	//68040
+ 	movel	#4, %a1@
+ #endif
+ #ifdef CONFIG_REDUX
+ 	movel	#4, %a1@
+ #endif
+ 	
+ 	lea	%pc@(m68k_cputype),%a1
+ #ifdef CONFIG_VM68K
+ 	//68030
+ 	//movel	#2, %a1@
+ 	//68040
+ 	movel	#4, %a1@
+ #endif
+ #ifdef CONFIG_REDUX
+ 	movel	#4, %a1@
+ #endif
+ 	
 	leds	0x1
 
 #ifdef CONFIG_MAC
@@ -733,7 +758,8 @@ L(test_notmac):
 1:
 	movew	#_PAGE_CACHE040,%d0
 
-	movel	#_PAGE_CACHE040W,%d1
+	//sjh let's not risk it - disable caching of page tables
+	movel	#_PAGE_NOCACHE,%d1
 
 L(save_cachetype):
 	/* Save cache mode for supervisor mode and page tables
@@ -911,9 +937,16 @@ L(nocon):
  *	First map the first 4, 8, or 16 MB of kernel code & data
  */
 
-	get_bi_record BI_MEMCHUNK
-	movel	%a0@(4),%d0
-	movel	#16*1024*1024,%d1
+	//real board - 128 MB with 4 MB for graphics
+#ifdef CONFIG_REDUX
+	movel	#124*1024*1024,%d0
+#endif
+	//fake board - 1024 MB with 4 MB for graphics (at 0x50000000)
+#ifdef CONFIG_VM68K
+	movel	#1024*1024*1024,%d0
+#endif
+	//the address it lives at
+	movel #0x10000000, %d1
 	cmpl	%d0,%d1
 	jls	1f
 	lsrl	#1,%d1
@@ -927,7 +960,9 @@ L(nocon):
 		%pc@(m68k_supervisor_cachemode)
 
 	putc	'C'
-
+	
+	//2k control area at 0x1000000 phys
+	mmu_map		#0xf0000000,#0x1000000,#2048,#_PAGE_NOCACHE030
 #ifdef CONFIG_AMIGA
 
 L(mmu_init_amiga):
@@ -2530,7 +2565,9 @@ func_start	mmu_get_root_table_entry,%d0/%a1
 	 * as the bootinfo structure is located directly behind the kernel
 	 * we simply search for the last entry.
 	 */
-	get_bi_record	BI_LAST
+	 
+//	get_bi_record	BI_LAST
+	lea	%pc@(_end), %a0
 	addw	#PAGESIZE-1,%a0
 	movel	%a0,%d0
 	andw	#-PAGESIZE,%d0
@@ -2992,6 +3029,10 @@ func_start	serial_putc,%d0/%d1/%a0/%a1
 	/* A little safe recursion is good for the soul */
 	serial_putc	#'\r'
 1:
+
+//redux
+	moveb %d0, (0x1000580).L
+	jra	L(serial_putc_done)
 
 #ifdef CONFIG_AMIGA
 	is_not_amiga(2f)

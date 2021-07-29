@@ -37,7 +37,7 @@ endif
 ifndef CONFIG_M68060
 cpuflags-$(CONFIG_M68040)	= -m68040
 endif
-cpuflags-$(CONFIG_M68030)	=
+cpuflags-$(CONFIG_M68030)	= -mnobitfield
 cpuflags-$(CONFIG_M68020)	=
 cpuflags-$(CONFIG_M68000)	= -m68000
 cpuflags-$(CONFIG_M5441x)	= $(call cc-option,-mcpu=54455,-mcfv4e)

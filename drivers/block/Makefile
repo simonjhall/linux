@@ -44,3 +44,9 @@ obj-$(CONFIG_BLK_DEV_RNBD)	+= rnbd/
 obj-$(CONFIG_BLK_DEV_NULL_BLK)	+= null_blk/
 
 swim_mod-y	:= swim.o swim_asm.o
+
+obj-$(CONFIG_REDUX) := ham_cf.o
+obj-$(CONFIG_VM68K) := ham_cf.o
+
+obj-$(CONFIG_SOC_REDUX) += ham_cf.o
+obj-$(CONFIG_SOC_VMRISCV) += ham_cf.o

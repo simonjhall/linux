@@ -3,6 +3,8 @@
 # Makefile for the linux kernel.
 #
 
+extra-$(CONFIG_REDUX)	:= head.o
+extra-$(CONFIG_VM68K)	:= head.o
 extra-$(CONFIG_AMIGA)	:= head.o
 extra-$(CONFIG_ATARI)	:= head.o
 extra-$(CONFIG_MAC)	:= head.o

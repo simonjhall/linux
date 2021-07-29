@@ -76,6 +76,7 @@ config M68030
 	bool "68030 support"
 	depends on MMU && !MMU_SUN3
 	select FPU
+	select CPU_HAS_NO_BITFIELDS
 	select CPU_HAS_ADDRESS_SPACES
 	help
 	  If you anticipate running this kernel on a computer with a MC68030
@@ -87,6 +88,7 @@ config M68040
 	depends on MMU && !MMU_SUN3
 	select FPU
 	select CPU_HAS_ADDRESS_SPACES
+	select CPU_HAS_NO_BITFIELDS
 	help
 	  If you anticipate running this kernel on a computer with a MC68LC040
 	  or MC68040 processor, say Y. Otherwise, say N. Note that an

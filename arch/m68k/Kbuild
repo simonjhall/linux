@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 obj-y				+= kernel/ mm/
+obj-$(CONFIG_REDUX)		+= simon/
+obj-$(CONFIG_VM68K)		+= simon/
 obj-$(CONFIG_Q40)		+= q40/
 obj-$(CONFIG_AMIGA)		+= amiga/
 obj-$(CONFIG_ATARI)		+= atari/
