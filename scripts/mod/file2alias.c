@@ -9,7 +9,7 @@
  * This software may be used and distributed according to the terms
  * of the GNU General Public License, incorporated herein by reference.
  */
-
+#include <assert.h>
 #include "modpost.h"
 #include "devicetable-offsets.h"
 
@@ -44,7 +44,7 @@ typedef struct {
 } uuid_le;
 typedef struct {
 	__u8 b[16];
-} uuid_t;
+} this_uuid_t;
 #define	UUID_STRING_LEN		36
 
 /* Big exception to the "don't include kernel headers into userspace, which
@@ -1326,7 +1326,7 @@ static int do_typec_entry(const char *filename, void *symval, char *alias)
 /* Looks like: tee:uuid */
 static int do_tee_entry(const char *filename, void *symval, char *alias)
 {
-	DEF_FIELD(symval, tee_client_device_id, uuid);
+/*	DEF_FIELD(symval, tee_client_device_id, uuid);
 
 	sprintf(alias, "tee:%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
 		uuid.b[0], uuid.b[1], uuid.b[2], uuid.b[3], uuid.b[4],
@@ -1334,7 +1334,8 @@ static int do_tee_entry(const char *filename, void *symval, char *alias)
 		uuid.b[10], uuid.b[11], uuid.b[12], uuid.b[13], uuid.b[14],
 		uuid.b[15]);
 
-	add_wildcard(alias);
+	add_wildcard(alias);*/
+	assert(0);
 	return 1;
 }
 
