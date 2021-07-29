@@ -39,8 +39,10 @@ ENTRY(_start)
 	li t3, (1 << 7)
 	csrs CSR_MSTATUS, t3
 
-	la a0, _start_kernel
-	csrw CSR_MEPC, a0
+	//set hart id
+	li a0, 0
+	la a2, _start_kernel
+	csrw CSR_MEPC, a2
 	mret
 	/*
 	 * Image header expected by Linux boot-loaders. The image header data
