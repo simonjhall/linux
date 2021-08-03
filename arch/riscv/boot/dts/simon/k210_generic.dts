@@ -16,7 +16,7 @@
 	compatible = "canaan,kendryte-k210";
 
 	chosen {
-		bootargs = "";
+		bootargs = "console=ttyS0 root=/dev/ham_uart0";
 		/*stdout-path = "serial0:115200n8";*/
 	};
 };

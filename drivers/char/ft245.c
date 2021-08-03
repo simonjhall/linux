@@ -27,6 +27,10 @@
 #include <linux/rtc.h>
 #include <linux/sched_clock.h>
 
+#include <linux/of.h>
+#include <linux/of_platform.h>
+#include <linux/pm_runtime.h>
+
 #define CUSTOM_RTC
 
 #include <linux/uaccess.h>
@@ -40,7 +44,7 @@
 //#define SERIAL_TIMER_VALUE 1
 
 //#define BASE_ADDRESS (128 * 1024 * 1024)
-#define BASE_ADDRESS (0xf0000000)
+#define BASE_ADDRESS (map_control())
 //#define BASE_ADDRESS (0x380000)
 //origins
 //#define BASE_ADDRESS (0xf0080000)
@@ -61,6 +65,19 @@
 #endif
 
 #define COUNTER_OFFSET 0x600
+
+unsigned char __iomem *g_pControlMembase;
+
+unsigned char __iomem *map_control(void)
+{
+	if (!g_pControlMembase)
+	{
+		g_pControlMembase = ioremap(0x1000000, 0x800);
+		BUG_ON(!g_pControlMembase);
+	}
+
+	return g_pControlMembase;
+}
 
 #ifdef CUSTOM_RTC
 static u64 notrace ft245_read_cycles(struct clocksource *cs)
@@ -408,4 +425,3 @@ static int __init iss_console_init(void)
 }
 
 console_initcall(iss_console_init);
-
