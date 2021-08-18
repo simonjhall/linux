@@ -37,42 +37,42 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #include <asm/asm-offsets.h>
 
 
-//#if __riscv_xlen == 32
+#if __riscv_xlen == 32
 /* Our RV64 64-bit routines are equivalent to our RV32 32-bit routines.  */
-//# define _m_udivdi3 __udivsi3
-//# define _m_umoddi3 __umodsi3
-//# define _m_divdi3 __divsi3
-//# define _m_moddi3 __modsi3
-//#else
-// ENTRY (__udivsi3)
-//   /* Compute _m_udivdi3(a0 << 32, a1 << 32); cast result to uint32_t.  */
-//   sll    a0, a0, 32
-//   sll    a1, a1, 32
-//   move   t0, ra
-//   jal    _m_udivdi3
-//   sext.w a0, a0
-//   jr     t0
-// END (__udivsi3)
+// # define _m_udivdi3 _m_udivsi3
+// # define _m_umoddi3 _m_umodsi3
+// # define _m_divdi3 _m_divsi3
+// # define _m_moddi3 _m_modsi3
+#else
+ENTRY (_m_udivsi3)
+  /* Compute _m_udivdi3(a0 << 32, a1 << 32); cast result to uint32_t.  */
+  sll    a0, a0, 32
+  sll    a1, a1, 32
+  move   t0, ra
+  jal    _m_udivdi3
+  sext.w a0, a0
+  jr     t0
+END (_m_udivsi3)
 
-// ENTRY (__umodsi3)
-//   /* Compute _m_udivdi3((uint32_t)a0, (uint32_t)a1); cast a1 to uint32_t.  */
-//   sll    a0, a0, 32
-//   sll    a1, a1, 32
-//   srl    a0, a0, 32
-//   srl    a1, a1, 32
-//   move   t0, ra
-//   jal    _m_udivdi3
-//   sext.w a0, a1
-//   jr     t0
-// END (__umodsi3)
+ENTRY (_m_umodsi3)
+  /* Compute _m_udivdi3((uint32_t)a0, (uint32_t)a1); cast a1 to uint32_t.  */
+  sll    a0, a0, 32
+  sll    a1, a1, 32
+  srl    a0, a0, 32
+  srl    a1, a1, 32
+  move   t0, ra
+  jal    _m_udivdi3
+  sext.w a0, a1
+  jr     t0
+END (_m_umodsi3)
 
-// FUNC_ALIAS (__modsi3, _m_moddi3)
+// FUNC_ALIAS (_m_modsi3, _m_moddi3)
 
-// ENTRY( __divsi3)
-//   /* Check for special case of INT_MIN/-1. Otherwise, fall into _m_divdi3.  */
-//   li    t0, -1
-//   beq   a1, t0, .L20
-//#endif
+ENTRY( _m_divsi3)
+  /* Check for special case of INT_MIN/-1. Otherwise, fall into _m_divdi3.  */
+  li    t0, -1
+  beq   a1, t0, .L20
+#endif
 
 ENTRY (_m_divdi3)
   bltz  a0, .L10
@@ -148,11 +148,11 @@ ENTRY (_m_moddi3)
   jr     t0
 END (_m_moddi3)
 
-//#if __riscv_xlen == 64
-//  /* continuation of __divsi3 */
-//.L20:
-//  sll   t0, t0, 31
-//  bne   a0, t0, _m_divdi3
-//  ret
-//END (__divsi3)
-//#endif
+#if __riscv_xlen == 64
+  /* continuation of _m_divsi3 */
+.L20:
+  sll   t0, t0, 31
+  bne   a0, t0, _m_divdi3
+  ret
+END (_m_divsi3)
+#endif

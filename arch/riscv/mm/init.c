@@ -392,11 +392,20 @@ enum TrapCause
 	TrapDataTlbMiss			=	25,
 };
 
+#ifdef CONFIG_32BIT
+static const uint64_t kMcauseInterrupt = 1 << 31;
+#else
+static const uint64_t kMcauseInterrupt = 1ull << 63;
+#endif
+//////////////////////
+
 static const uint64_t kRv32SatpModeShift = 31;
 static const uint64_t kRv32SatpPpnMask = (1ull << 22) - 1;
+//////////////////////
 
 static const uint64_t kRv64SatpModeShift = 60;
 static const uint64_t kRv64SatpPpnMask = (1ull << 44) - 1;
+//////////////////////
 
 static const uint64_t kSv32VaMask = (1ull << 32) - 1;
 static const uint64_t kSv32VaVpnWidth = 10;		//the size of an individual VPN segment
@@ -406,8 +415,18 @@ static const uint64_t kSv32PteSizeBytes = 4;
 
 static const uint64_t kSv32PtePpn0Shift = 10;
 static const uint64_t kSv32PtePpn1Shift = 20;
+//////////////////////
 
 static const uint64_t kSv39VaMask = (1ull << 39) - 1;
+static const uint64_t kSv39VaVpnWidth = 9;		//the size of an individual VPN segment
+static const uint64_t kSv39VaVpnMask = (1ull << kSv39VaVpnWidth) - 1;
+
+static const uint64_t kSv39PteSizeBytes = 8;
+
+static const uint64_t kSv39PtePpn0Shift = 10;
+static const uint64_t kSv39PtePpn1Shift = 19;
+static const uint64_t kSv39PtePpn2Shift = 28;
+//////////////////////
 
 static const uint64_t kSvCommonVaPageWidth = 12;
 static const uint64_t kSvCommonVaPageMask = (1 << kSvCommonVaPageWidth) - 1;
@@ -424,32 +443,52 @@ static const uint64_t kSvCommonPteDMask = 1 << 7;
 static const uint64_t kSvCommonPteXWRMask = kSvCommonPteXMask | kSvCommonPteWMask | kSvCommonPteRMask;
 static const uint64_t kSvCommonPteDAGUXWRVMask = 0xff;
 
-asmlinkage void _m_write_tlb(uint32_t id, uint32_t entry, uint32_t vpn, uint32_t ppn, uint32_t daguxwrv, uint32_t super)
+//////////////////////
+
+static const uint64_t kSatpModeBare = 0;
+static const uint64_t kSatpModeSv32 = 1;
+static const uint64_t kSatpModeSv39 = 8;
+
+//////////////////////
+
+static const unsigned int kTlbInvalid	= 0;
+static const unsigned int kTlbRegular	= 1;
+static const unsigned int kTlbMega		= 2;
+static const unsigned int kTlbGiga		= 3;
+
+//////////////////////
+
+uint64_t reservation_addr_pa;
+uint32_t tlb_entry;				//rolling index of tlb index
+
+//////////////////////
+
+asmlinkage void _m_write_tlb(uint32_t id, uint32_t entry, unsigned long vpn, unsigned long ppn, uint32_t daguxwrv, uint32_t size)
 {
 	const unsigned int kTlbEntriesBits = 2;
 	const unsigned int kTlbEntries = 1 << kTlbEntriesBits;
 	const unsigned int kTlbEntriesMask = kTlbEntries - 1;
 
-	//{r_tlb_ppn[0], r_tlb_daguxwrv[0], r_tlb_super[0], r_tlb_valid[0]} <= r_csrRead[30:0];
-	//r_tlb_vpn[0] <= r_csrRead[19:0];
-	//r_tlb_entry_select <= r_csrRead[something:1]
-	//r_tlb_data_or_insn <= r_csrRead[0]
+	//7c0 = {r_tlb_entry_select, r_tlb_data_or_insn}
+	//7c1 = {r_tlb_ppn, r_tlb_daguxwrv, r_tlb_size}
+	//7c2 = {r_tlb_vpn}
 
 	csr_write(0x7c0, ((entry & kTlbEntriesMask) << 1) | (id == 0 ? 0 : 1));
-	csr_write(0x7c1, (ppn << 10) | (daguxwrv << 2) | (super << 1) | 1);
-	csr_write(0x7c2, (vpn & 0xfffff));
+	csr_write(0x7c1, (ppn << 10) | (daguxwrv << 2) | size);
+	csr_write(0x7c2, vpn);
 }
 
-static bool translate_va32_pa(uint32_t satp, uint32_t pa, bool execute, bool read, bool write, uint32_t *pVa)
+#ifdef CONFIG_32BIT
+static bool translate_va_pa_sv32(uint32_t satp, uintptr_t va, bool execute, bool read, bool write, uintptr_t *pPa)
 {
 	//sv32 implementation
 	uint32_t satp_ppn = satp & kRv32SatpPpnMask;
 	uint32_t satp_ppn_4k = satp_ppn << kSvCommonVaPageWidth;
 
-	uint32_t pa_vpn = (pa & kSv32VaMask) >> kSvCommonVaPageWidth;
+	uint32_t va_vpn = (va & kSv32VaMask) >> kSvCommonVaPageWidth;
 
 	//PTE at address satp.ppn × PAGESIZE + va.vpn[1] × PTESIZE
-	uint32_t pte1_addr = satp_ppn_4k + (pa_vpn >> kSv32VaVpnWidth) * kSv32PteSizeBytes;
+	uint32_t pte1_addr = satp_ppn_4k + (va_vpn >> kSv32VaVpnWidth) * kSv32PteSizeBytes;
 	uint32_t pte1 = *(uint32_t *)pte1_addr;
 
 	//if superpage
@@ -476,16 +515,16 @@ static bool translate_va32_pa(uint32_t satp, uint32_t pa, bool execute, bool rea
 		if (read && ((pte1 & kSvCommonPteRMask) == 0))
 			valid = false;
 
-		*pVa = ((((pte1 >> kSv32PtePpn1Shift) << kSv32VaVpnWidth)
-			| (pa_vpn & kSv32VaVpnMask)) << kSvCommonVaPageWidth)
-			| (pa & kSvCommonVaPageMask);
+		*pPa = ((((pte1 >> kSv32PtePpn1Shift) << kSv32VaVpnWidth)
+			| (va_vpn & kSv32VaVpnMask)) << kSvCommonVaPageWidth)
+			| (va & kSvCommonVaPageMask);
 		return valid;
 	}
 
 	//leaf node
 	//PTE at address pte.ppn × PAGESIZE + va.vpn[0] × PTESIZE
 	uint32_t pte1_ppn_4k = (pte1 >> kSv32PtePpn0Shift) << kSvCommonVaPageWidth;
-	uint32_t pte0_addr = pte1_ppn_4k + (pa_vpn & kSv32VaVpnMask) * kSv32PteSizeBytes;
+	uint32_t pte0_addr = pte1_ppn_4k + (va_vpn & kSv32VaVpnMask) * kSv32PteSizeBytes;
 	uint32_t pte0 = *(uint32_t *)pte0_addr;
 
 	//check permissions
@@ -507,30 +546,227 @@ static bool translate_va32_pa(uint32_t satp, uint32_t pa, bool execute, bool rea
 
 	//i = 0
 	//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i].
-	*pVa = ((pte0 >> kSv32PtePpn0Shift) << kSvCommonVaPageWidth) | (pa & kSvCommonVaPageMask);
+	*pPa = ((pte0 >> kSv32PtePpn0Shift) << kSvCommonVaPageWidth) | (va & kSvCommonVaPageMask);
 
 	return valid;
 }
 
-bool translate_va_pa(uint32_t pa, bool execute, bool read, bool write, uint32_t *pVa)
+void handle_tlb_miss_sv32(bool data_or_insn, unsigned long tval)
+{
+	unsigned int entry = tlb_entry++;
+
+	//For Sv32, PTESIZE=4 and LEVELS=2
+	//Let a be satp.ppn × PAGESIZE, and let i = LEVELS − 1.
+	//i = 1
+	uint32_t satp = csr_read(CSR_SATP);
+	uint32_t satp_ppn = satp & kRv32SatpPpnMask;
+	uint32_t satp_ppn_4k = satp_ppn << kSvCommonVaPageWidth;
+
+	uint32_t tval_vpn = (tval & kSv32VaMask) >> kSvCommonVaPageWidth;
+
+	//PTE at address satp.ppn × PAGESIZE + va.vpn[1] × PTESIZE
+	uint32_t pte1_addr = satp_ppn_4k + (tval_vpn >> kSv32VaVpnWidth) * kSv32PteSizeBytes;
+	uint32_t pte1 = *(uint32_t *)pte1_addr;
+
+	//if megapage OR pte not valid
+	if ((pte1 & kSvCommonPteXWRMask) || ((pte1 & kSvCommonPteVMask) == 0))
+	{
+		//if not valid: write anything
+
+		//if megapage: i = 1, LEVELS = 2
+		//pa.ppn[i − 1 : 0] = va.vpn[i − 1 : 0]
+		//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i]
+
+		if (pte1 & kSvCommonPteVMask)
+		{
+			//if valid, set A
+			pte1 |= kSvCommonPteAMask;
+			//and write back
+			*(uint32_t *)pte1_addr = pte1;
+		}
+
+		_m_write_tlb(data_or_insn, entry,
+			tval_vpn & ~kSv32VaVpnMask,							//tval.vpn[1]
+			(pte1 >> kSv32PtePpn1Shift) << kSv32VaVpnWidth,		//pte.ppn[1]
+			pte1 & kSvCommonPteDAGUXWRVMask,
+			kTlbMega);
+
+		return;
+	}
+
+	//leaf node
+	//PTE at address pte.ppn × PAGESIZE + va.vpn[0] × PTESIZE
+	uint32_t pte1_ppn_4k = (pte1 >> kSv32PtePpn0Shift) << kSvCommonVaPageWidth;
+	uint32_t pte0_addr = pte1_ppn_4k + (tval_vpn & kSv32VaVpnMask) * kSv32PteSizeBytes;
+	uint32_t pte0 = *(uint32_t *)pte0_addr;
+
+	if (pte0 & kSvCommonPteVMask)
+	{
+		//if valid, set A
+		pte0 |= kSvCommonPteAMask;
+		//and write back
+		*(uint32_t *)pte0_addr = pte0;
+	}
+
+	//i = 0
+	//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i].
+	_m_write_tlb(data_or_insn, entry,
+		tval_vpn,
+		pte0 >> kSv32PtePpn0Shift,
+		pte0 & kSvCommonPteDAGUXWRVMask,
+		kTlbRegular);
+}
+
+void handle_tlb_miss(bool data_or_insn, unsigned long tval)
+{
+	handle_tlb_miss_sv32(data_or_insn, tval);
+}
+
+bool translate_va_pa(uintptr_t va, bool execute, bool read, bool write, uintptr_t *pPa)
 {
 	uint32_t satp = csr_read(CSR_SATP);
 
 	//check if translation is enabled
-	if ((satp >> kRv32SatpModeShift) == 0)
+	if ((satp >> kRv32SatpModeShift) == kSatpModeBare)
 	{
 		//no virtual address translation
-		*pVa = pa;
+		*pPa = va;
 		return true;
 	}
 
-	return translate_va32_pa(satp, pa, execute, read, write, pVa);
+	//assume sv32
+	return translate_va_pa_sv32(satp, va, execute, read, write, pPa);
 }
 
-uint32_t reservation_addr;
-uint32_t tlb_entry;
+#else
 
-uint32_t get_reg(uint32_t *pRegs, uint32_t id)
+static bool translate_va_pa_sv39(uint64_t satp, uintptr_t pa, bool execute, bool read, bool write, uintptr_t *pVa)
+{
+	return false;
+}
+
+void handle_tlb_miss_sv39(bool data_or_insn, unsigned long tval)
+{
+	unsigned int entry = tlb_entry++;
+
+	//LEVELS equals 3 and PTESIZE equals 8.
+	//Let a be satp.ppn × PAGESIZE, and let i = LEVELS − 1.
+	//i = 2
+	uint64_t satp = csr_read(CSR_SATP);
+	uint64_t satp_ppn = satp & kRv64SatpPpnMask;
+	uint64_t satp_ppn_4k = satp_ppn << kSvCommonVaPageWidth;
+
+	uint64_t tval_vpn = (tval & kSv39VaMask) >> kSvCommonVaPageWidth;
+
+	//PTE at address satp.ppn × PAGESIZE + va.vpn[2] × PTESIZE
+	uint64_t pte2_addr = satp_ppn_4k + (tval_vpn >> (kSv39VaVpnWidth * 2)) * kSv39PteSizeBytes;
+	uint64_t pte2 = *(uint64_t *)pte2_addr;
+
+	//if gigapage OR pte not valid
+	if ((pte2 & kSvCommonPteXWRMask) || ((pte2 & kSvCommonPteVMask) == 0))
+	{
+		//if not valid: write anything
+
+		//if gigapage: i = 2, LEVELS = 3
+		//pa.ppn[i − 1 : 0] = va.vpn[i − 1 : 0]
+		//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i]
+
+		if (pte2 & kSvCommonPteVMask)
+		{
+			//if valid, set A
+			pte2 |= kSvCommonPteAMask;
+			//and write back
+			*(uint64_t *)pte2_addr = pte2;
+		}
+
+		_m_write_tlb(data_or_insn, entry,
+			tval_vpn & (kSv39VaVpnMask << (kSv39VaVpnWidth * 2)),		//{tval.vpn[2], 0, 0}
+			(pte2 >> kSv39PtePpn2Shift) << (kSv39VaVpnWidth * 2),		//{pte.ppn[2], 0, 0}
+			pte2 & kSvCommonPteDAGUXWRVMask,
+			kTlbGiga);
+
+		return;
+	}
+
+	//intermediate node
+	//i = 1
+	//PTE at address pte.ppn × PAGESIZE + va.vpn[1] × PTESIZE
+	uint64_t pte2_ppn_4k = (pte2 >> kSv39PtePpn0Shift) << kSvCommonVaPageWidth;
+	uint64_t pte1_addr = pte2_ppn_4k + ((tval_vpn >> kSv39VaVpnWidth) & kSv39VaVpnMask) * kSv39PteSizeBytes;
+	uint64_t pte1 = *(uint64_t *)pte1_addr;
+
+	//if megapage OR pte not valid
+	if ((pte1 & kSvCommonPteXWRMask) || ((pte1 & kSvCommonPteVMask) == 0))
+	{
+		//if not valid: write anything
+
+		//if megapage: i = 1, LEVELS = 3
+		//pa.ppn[i − 1 : 0] = va.vpn[i − 1 : 0]
+		//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i]
+
+		if (pte1 & kSvCommonPteVMask)
+		{
+			//if valid, set A
+			pte1 |= kSvCommonPteAMask;
+			//and write back
+			*(uint64_t *)pte1_addr = pte1;
+		}
+
+		_m_write_tlb(data_or_insn, entry,
+			tval_vpn & ~kSv39VaVpnMask,							//{tval.vpn[2], tval.vpn[1], 0}
+			(pte1 >> kSv39PtePpn1Shift) << kSv39VaVpnWidth,		//{pte.ppn[2], pte.ppn[1], 0}
+			pte1 & kSvCommonPteDAGUXWRVMask,
+			kTlbMega);
+
+		return;
+	}
+
+	//leaf node
+	//i = 0
+	//PTE at address pte.ppn × PAGESIZE + va.vpn[0] × PTESIZE
+	uint64_t pte1_ppn_4k = (pte1 >> kSv39PtePpn0Shift) << kSvCommonVaPageWidth;
+	uint64_t pte0_addr = pte1_ppn_4k + (tval_vpn & kSv39VaVpnMask) * kSv39PteSizeBytes;
+	uint64_t pte0 = *(uint64_t *)pte0_addr;
+
+	if (pte0 & kSvCommonPteVMask)
+	{
+		//if valid, set A
+		pte0 |= kSvCommonPteAMask;
+		//and write back
+		*(uint64_t *)pte0_addr = pte0;
+	}
+
+	//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i].
+	_m_write_tlb(data_or_insn, entry,
+		tval_vpn,								//{tval.vpn[2], tval.vpn[1], tval.vpn[0]}
+		pte0 >> kSv39PtePpn0Shift,				//{pte.ppn[2], pte.ppn[1], pte.ppn[0]}
+		pte0 & kSvCommonPteDAGUXWRVMask,
+		kTlbRegular);
+}
+
+void handle_tlb_miss(bool data_or_insn, unsigned long tval)
+{
+	handle_tlb_miss_sv39(data_or_insn, tval);
+}
+
+bool translate_va_pa(uintptr_t va, bool execute, bool read, bool write, uintptr_t *pPa)
+{
+	uint64_t satp = csr_read(CSR_SATP);
+
+	//check if translation is enabled
+	if ((satp >> kRv64SatpModeShift) == kSatpModeBare)
+	{
+		//no virtual address translation
+		*pPa = va;
+		return true;
+	}
+
+	//assume sv39
+	return translate_va_pa_sv39(satp, va, execute, read, write, pPa);
+}
+#endif
+
+unsigned long get_reg(unsigned long *pRegs, uint32_t id)
 {
 	if (id == 0)
 		return 0;
@@ -540,7 +776,8 @@ uint32_t get_reg(uint32_t *pRegs, uint32_t id)
 		return pRegs[id];
 }
 
-void set_reg(uint32_t *pRegs, uint32_t id, uint32_t val)
+#ifdef CONFIG_64BIT
+static void set_reg64(unsigned long *pRegs, uint32_t id, uint64_t val)
 {
 	if (id == 0)
 	{
@@ -551,11 +788,49 @@ void set_reg(uint32_t *pRegs, uint32_t id, uint32_t val)
 	else
 		pRegs[id] = val;
 }
+#endif
 
-int _m_divdi3(int a, int b);
-unsigned int _m_udivdi3(unsigned int a, unsigned int b);
-int _m_umoddi3(int a, int b);
-unsigned int _m_moddi3(unsigned int a, unsigned int b);
+static void set_reg32(unsigned long *pRegs, uint32_t id, uint32_t _val)
+{
+	unsigned long val = _val;
+
+#ifdef CONFIG_64BIT
+	//sign extend
+	if (_val & (1 << 31))
+		val |= 0xffffffff00000000ull;
+#endif
+	if (id == 0)
+	{
+		//do nothing
+	}
+	else if (id == 4)
+		csr_write(CSR_MSCRATCH, val);
+	else
+		pRegs[id] = val;
+}
+
+#ifdef CONFIG_64BIT
+static void set_reg_full(unsigned long *pRegs, uint32_t id, unsigned long val)
+{
+	set_reg64(pRegs, id, val);
+}
+#else
+static void set_reg_full(unsigned long *pRegs, uint32_t id, unsigned long val)
+{
+	set_reg32(pRegs, id, val);
+}
+#endif
+
+
+long _m_divdi3(long a, long b);
+unsigned long _m_udivdi3(unsigned long a, unsigned long b);
+long _m_umoddi3(long a, long b);
+unsigned long _m_moddi3(unsigned long a, unsigned long b);
+
+int _m_divsi3(int a, int b);
+unsigned int _m_udivsi3(unsigned int a, unsigned int b);
+int _m_umodsi3(int a, int b);
+unsigned int _m_modsi3(unsigned int a, unsigned int b);
 
 static uint32_t amo_add(uint32_t original, uint32_t incoming)
 {
@@ -582,10 +857,10 @@ static uint32_t amo_xor(uint32_t original, uint32_t incoming)
 	return original ^ incoming;
 }
 
-static bool amo_op(uint32_t *pRegs, unsigned int rd, unsigned int rs1, unsigned int rs2,
+static bool amo_op32(unsigned long *pRegs, unsigned int rd, unsigned int rs1, unsigned int rs2,
 	uint32_t (*op)(uint32_t, uint32_t))
 {
-	uint32_t pa;
+	uintptr_t pa;
 	//read and write
 	bool success = translate_va_pa(get_reg(pRegs, rs1), false, true, true, &pa);
 
@@ -593,7 +868,7 @@ static bool amo_op(uint32_t *pRegs, unsigned int rd, unsigned int rs1, unsigned 
 	{
 		uint32_t original_value = *(uint32_t *)pa;
 		uint32_t new_value = op(original_value, get_reg(pRegs, rs2));
-		set_reg(pRegs, rd, original_value);
+		set_reg_full(pRegs, rd, original_value);
 		*(uint32_t *)pa = new_value;
 
 		return true;
@@ -602,23 +877,24 @@ static bool amo_op(uint32_t *pRegs, unsigned int rd, unsigned int rs1, unsigned 
 	{
 		//store page fault at va
 		csr_write(CSR_MTVAL, get_reg(pRegs, rs1));
-		csr_write(CSR_MCAUSE, (1 << 31) | TrapStorePageFault);
+		csr_write(CSR_MCAUSE, kMcauseInterrupt | TrapStorePageFault);
 
 		//now fall through out of TrapIllegalIns
 		return false;
 	}
 }
 
-asmlinkage void _m_exception_c(uint32_t *pRegs)
+asmlinkage void _m_exception_c(unsigned long *pRegs)
 {
-	uint32_t cause = csr_read(CSR_MCAUSE);
-	uint32_t tval = csr_read(CSR_MTVAL);
+	unsigned long cause = csr_read(CSR_MCAUSE);
+	unsigned long tval = csr_read(CSR_MTVAL);
 
-	if (cause & (1 << 31))
+	if (cause & kMcauseInterrupt)
 	{
 		//exception
 		switch (cause & 31)
 		{
+#if 1
 			case TrapIllegalIns:
 			{
 				bool fall_through = true;
@@ -626,8 +902,10 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 				unsigned int opcode = tval & 127;
 				switch (opcode)
 				{
-					//op, to be shared with op-32
+					//op
 					case 0b0110011:
+					// //op-32
+					// case 0b0111011:
 					{
 						unsigned int rd = (tval >> 7) & 31;
 						unsigned int funct3 = (tval >> 12) & 7;
@@ -645,28 +923,28 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 									//div
 									case 0b100:
 									{
-										set_reg(pRegs, rd, _m_divdi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
+										set_reg32(pRegs, rd, _m_divdi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
 										fall_through = false;
 										break;
 									}
 									//divu
 									case 0b101:
 									{
-										set_reg(pRegs, rd, _m_udivdi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
+										set_reg32(pRegs, rd, _m_udivdi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
 										fall_through = false;
 										break;
 									}
 									//rem
 									case 0b110:
 									{
-										set_reg(pRegs, rd, _m_moddi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
+										set_reg32(pRegs, rd, _m_moddi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
 										fall_through = false;
 										break;
 									}
 									//remu
 									case 0b111:
 									{
-										set_reg(pRegs, rd, _m_umoddi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
+										set_reg32(pRegs, rd, _m_umoddi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
 										fall_through = false;
 										break;
 									}
@@ -696,7 +974,7 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 							//AMOSWAP.W
 							case 0b00001:
 							{
-								if (amo_op(pRegs, rd, rs1, rs2, &amo_swap))
+								if (amo_op32(pRegs, rd, rs1, rs2, &amo_swap))
 									fall_through = false;
 
 								break;		//break from this instruction
@@ -704,7 +982,7 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 							//AMOADD.W
 							case 0b00000:
 							{
-								if (amo_op(pRegs, rd, rs1, rs2, &amo_add))
+								if (amo_op32(pRegs, rd, rs1, rs2, &amo_add))
 									fall_through = false;
 
 								break;		//break from this instruction
@@ -712,7 +990,7 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 							//AMOXOR.W
 							case 0b00100:
 							{
-								if (amo_op(pRegs, rd, rs1, rs2, &amo_xor))
+								if (amo_op32(pRegs, rd, rs1, rs2, &amo_xor))
 									fall_through = false;
 
 								break;		//break from this instruction
@@ -720,7 +998,7 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 							//AMOAND.W
 							case 0b01100:
 							{
-								if (amo_op(pRegs, rd, rs1, rs2, &amo_and))
+								if (amo_op32(pRegs, rd, rs1, rs2, &amo_and))
 									fall_through = false;
 
 								break;		//break from this instruction
@@ -728,7 +1006,7 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 							//AMOOR.W
 							case 0b01000:
 							{
-								if (amo_op(pRegs, rd, rs1, rs2, &amo_or))
+								if (amo_op32(pRegs, rd, rs1, rs2, &amo_or))
 									fall_through = false;
 
 								break;		//break from this instruction
@@ -736,14 +1014,14 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 							//LR.W
 							case 0b00010:
 							{
-								uint32_t pa;
+								uintptr_t pa;
 								//read only
 								bool success = translate_va_pa(get_reg(pRegs, rs1), false, true, false, &pa);
 
 								if (success)
 								{
-									set_reg(pRegs, rd, *(uint32_t *)pa);
-									reservation_addr = get_reg(pRegs, rs1);
+									set_reg_full(pRegs, rd, *(uint32_t *)pa);
+									reservation_addr_pa = pa;
 
 									fall_through = false;
 								}
@@ -751,7 +1029,7 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 								{
 									//load page fault at va
 									csr_write(CSR_MTVAL, get_reg(pRegs, rs1));
-									csr_write(CSR_MCAUSE, (1 << 31) | TrapLoadPageFault);
+									csr_write(CSR_MCAUSE, kMcauseInterrupt | TrapLoadPageFault);
 
 									//now fall through out of TrapIllegalIns
 								}
@@ -760,7 +1038,7 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 							//SC.W
 							case 0b00011:
 							{
-								uint32_t pa;
+								uintptr_t pa;
 								//write only
 								bool success = translate_va_pa(get_reg(pRegs, rs1), false, false, true, &pa);
 
@@ -774,17 +1052,17 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 									//the instruction does not write to memory, and it writes a
 									//nonzero value to rd.
 
-									if (get_reg(pRegs, rs1) == reservation_addr)
+									if (pa == reservation_addr_pa)
 									{
 										//success
 										*(uint32_t *)pa = get_reg(pRegs, rs2);
-										set_reg(pRegs, rd, 0);
+										set_reg_full(pRegs, rd, 0);
 									}
 									else	//failure
-										set_reg(pRegs, rd, 1);
+										set_reg_full(pRegs, rd, 1);
 
 									//token invalidation
-									reservation_addr = -1;
+									reservation_addr_pa = -1;
 
 									fall_through = false;
 								}
@@ -792,7 +1070,7 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 								{
 									//store page fault at va
 									csr_write(CSR_MTVAL, get_reg(pRegs, rs1));
-									csr_write(CSR_MCAUSE, (1 << 31) | TrapStorePageFault);
+									csr_write(CSR_MCAUSE, kMcauseInterrupt | TrapStorePageFault);
 
 									//now fall through out of TrapIllegalIns
 								}
@@ -814,7 +1092,7 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 					break;
 				}
 			} /* fall through */
-
+#endif
 			case TrapInsAddrMisaligned:
 			case TrapInsAccFault:
 			case TrapBreakpoint:
@@ -830,9 +1108,9 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 			{
 				//delegated to supervisor mode
 				//manually perform a trap with the help of mret
-				uint32_t mstatus = csr_read(CSR_MSTATUS);
-				uint32_t mstatus_mpp = (mstatus >> 11) & 3;		//previous mode before machine mode trap
-				uint32_t mstatus_sie = (mstatus >> 1) & 1;		//current sie
+				unsigned long mstatus = csr_read(CSR_MSTATUS);
+				unsigned long mstatus_mpp = (mstatus >> 11) & 3;	//previous mode before machine mode trap
+				unsigned long mstatus_sie = (mstatus >> 1) & 1;		//current sie
 
 				// spie <= sie
 				mstatus = mstatus & ~(1 << 5);					//clear spie
@@ -867,23 +1145,23 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 			//call from supervisor code
 			case TrapSuperCall:
 			{
-				switch (get_reg(pRegs, 17))
+				switch (get_reg(pRegs, 17) & 0xffffffff)
 				{
 					//base extension
 					case 0x10:
 					{
-						switch (get_reg(pRegs, 16))
+						switch (get_reg(pRegs, 16) & 0xffffffff)
 						{
 							//get spec version
 							case 0x0:
 							{
-								set_reg(pRegs, 10, 0);		//SBI_SUCCESS
-								set_reg(pRegs, 11, (0 << 24) | 2);
+								set_reg_full(pRegs, 10, 0);		//SBI_SUCCESS
+								set_reg_full(pRegs, 11, (0 << 24) | 2);
 								break;
 							}
 							default:
 							{
-								set_reg(pRegs, 10, -2);		//SBI_ERR_NOT_SUPPORTED
+								set_reg_full(pRegs, 10, -2);	//SBI_ERR_NOT_SUPPORTED
 								break;
 							}
 						}
@@ -891,7 +1169,7 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 					}
 					default:
 					{
-						set_reg(pRegs, 10, -2);		//SBI_ERR_NOT_SUPPORTED
+						set_reg_full(pRegs, 10, -2);		//SBI_ERR_NOT_SUPPORTED
 						break;
 					}
 				}
@@ -907,69 +1185,13 @@ asmlinkage void _m_exception_c(uint32_t *pRegs)
 				break;
 
 			case TrapInstTlbMiss:
+			{
+				handle_tlb_miss(false, tval);
+				break;
+			}
 			case TrapDataTlbMiss:
 			{
-				//sv32
-				uint32_t satp = csr_read(CSR_SATP);
-				uint32_t satp_ppn = satp & kRv32SatpPpnMask;
-				uint32_t satp_ppn_4k = satp_ppn << kSvCommonVaPageWidth;
-
-				uint32_t tval_vpn = (tval & kSv32VaMask) >> kSvCommonVaPageWidth;
-
-				//PTE at address satp.ppn × PAGESIZE + va.vpn[1] × PTESIZE
-				uint32_t pte1_addr = satp_ppn_4k + (tval_vpn >> kSv32VaVpnWidth) * kSv32PteSizeBytes;
-				uint32_t pte1 = *(uint32_t *)pte1_addr;
-
-				unsigned int data_or_insn = (cause & 31) == TrapInstTlbMiss ? 0 : 1;
-				unsigned int entry = tlb_entry++;
-
-				//if superpage OR pte not valid
-				if ((pte1 & kSvCommonPteXWRMask) || ((pte1 & kSvCommonPteVMask) == 0))
-				{
-					//if not valid: write anything
-
-					//if superpage: i = 1, LEVELS = 2
-					//pa.ppn[i − 1 : 0] = va.vpn[i − 1 : 0]
-					//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i]
-
-					if (pte1 & kSvCommonPteVMask)
-					{
-						//if valid, set A
-						pte1 |= kSvCommonPteAMask;
-						//and write back
-						*(uint32_t *)pte1_addr = pte1;
-					}
-
-					_m_write_tlb(data_or_insn, entry,
-						tval_vpn & ~kSv32VaVpnMask,
-						(pte1 >> kSv32PtePpn1Shift) << kSv32VaVpnWidth,
-						pte1 & kSvCommonPteDAGUXWRVMask,
-						1);
-					break;
-				}
-
-				//leaf node
-				//PTE at address pte.ppn × PAGESIZE + va.vpn[0] × PTESIZE
-				uint32_t pte1_ppn_4k = (pte1 >> kSv32PtePpn0Shift) << kSvCommonVaPageWidth;
-				uint32_t pte0_addr = pte1_ppn_4k + (tval_vpn & kSv32VaVpnMask) * kSv32PteSizeBytes;
-				uint32_t pte0 = *(uint32_t *)pte0_addr;
-
-				if (pte0 & kSvCommonPteVMask)
-				{
-					//if valid, set A
-					pte0 |= kSvCommonPteAMask;
-					//and write back
-					*(uint32_t *)pte0_addr = pte0;
-				}
-
-				//i = 0
-				//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i].
-				_m_write_tlb(data_or_insn, entry,
-					tval_vpn,
-					pte0 >> kSv32PtePpn0Shift,
-					pte0 & kSvCommonPteDAGUXWRVMask,
-					0);
-
+				handle_tlb_miss(true, tval);
 				break;
 			}
 		}
