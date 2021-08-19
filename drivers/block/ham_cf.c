@@ -39,7 +39,8 @@ static unsigned long long nsectors = 16 * 1024 * 1024; /* How big the drive is *
 //#define BASE_ADDRESS (128 * 1024 * 1024)
 //#define BASE_ADDRESS (0xf0000000)
 //#define BASE_ADDRESS (0x300000)
-#define BASE_ADDRESS (0xf0000000)
+// #define BASE_ADDRESS (0xf0000000)
+#define BASE_ADDRESS (map_control())
 
 //fake
 #define VM_DATA_OFFSET 0x508
@@ -64,6 +65,8 @@ static unsigned long long nsectors = 16 * 1024 * 1024; /* How big the drive is *
 
 #define CF_STARTING_SECTOR 135168
 
+unsigned char __iomem *map_control(void);
+
 struct Cf
 {
 	unsigned int m_data;
@@ -84,7 +87,7 @@ struct Cf
 
 static void cf_wait(void)
 {
-	volatile unsigned char *pStatus = (volatile unsigned char *)(BASE_ADDRESS | 0x51c);
+	volatile unsigned char *pStatus = (volatile unsigned char *)(BASE_ADDRESS + 0x51c);
 	
 	while (*pStatus & (1 << 7))
 		;

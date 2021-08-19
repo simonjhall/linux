@@ -491,10 +491,10 @@ static bool translate_va_pa_sv32(uint32_t satp, uintptr_t va, bool execute, bool
 	uint32_t pte1_addr = satp_ppn_4k + (va_vpn >> kSv32VaVpnWidth) * kSv32PteSizeBytes;
 	uint32_t pte1 = *(uint32_t *)pte1_addr;
 
-	//if superpage
+	//if megapage
 	if (pte1 & kSvCommonPteXWRMask)
 	{
-		//if superpage: i = 1, LEVELS = 2
+		//if megapage: i = 1, LEVELS = 2
 		//pa.ppn[i − 1 : 0] = va.vpn[i − 1 : 0]
 		//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i]
 
@@ -640,9 +640,117 @@ bool translate_va_pa(uintptr_t va, bool execute, bool read, bool write, uintptr_
 
 #else
 
-static bool translate_va_pa_sv39(uint64_t satp, uintptr_t pa, bool execute, bool read, bool write, uintptr_t *pVa)
+static bool translate_va_pa_sv39(uint64_t satp, uintptr_t va, bool execute, bool read, bool write, uintptr_t *pPa)
 {
-	return false;
+	//sv39 implementation
+	uint64_t satp_ppn = satp & kRv64SatpPpnMask;
+	uint64_t satp_ppn_4k = satp_ppn << kSvCommonVaPageWidth;
+
+	uint64_t va_vpn = (va & kSv39VaMask) >> kSvCommonVaPageWidth;
+
+	//PTE at address satp.ppn × PAGESIZE + va.vpn[2] × PTESIZE
+	//i = 2
+	uint64_t pte2_addr = satp_ppn_4k + (va_vpn >> (kSv39VaVpnWidth * 2)) * kSv39PteSizeBytes;
+	uint64_t pte2 = *(uint64_t *)pte2_addr;
+
+	//if gigapage
+	if (pte2 & kSvCommonPteXWRMask)
+	{
+		//if gigapage: i = 2, LEVELS = 3
+		//pa.ppn[i − 1 : 0] = va.vpn[i − 1 : 0]
+		//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i]
+
+		//if valid, set A
+		if (pte2 & kSvCommonPteVMask)
+		{
+			pte2 |= kSvCommonPteAMask;
+			//and write back
+			*(uint64_t *)pte2_addr = pte2;
+		}
+
+		//check valid and permissions
+		bool valid = (pte2 & kSvCommonPteVMask) ? true : false;
+		if (execute && ((pte2 & kSvCommonPteXMask) == 0))
+			valid = false;
+		if (write && ((pte2 & kSvCommonPteWMask) == 0))
+			valid = false;
+		if (read && ((pte2 & kSvCommonPteRMask) == 0))
+			valid = false;
+
+		//ppn2 | vpn1 | vpn0 | offset
+		*pPa = ((((pte2 >> kSv39PtePpn2Shift) << (kSv39VaVpnWidth * 2))		//ppn2
+				| (va_vpn & (kSv39VaVpnMask << kSv39VaVpnWidth))			//vpn1
+				| (va_vpn & kSv39VaVpnMask)) << kSvCommonVaPageWidth)		//vpn0
+				| (va & kSvCommonVaPageMask);								//offset
+		return valid;
+	}
+
+	//intermediate node
+	//i = 1
+	//PTE at address pte.ppn × PAGESIZE + va.vpn[1] × PTESIZE
+	uint64_t pte2_ppn_4k = (pte2 >> kSv39PtePpn0Shift) << kSvCommonVaPageWidth;
+	uint64_t pte1_addr = pte2_ppn_4k + ((va_vpn >> kSv39VaVpnWidth) & kSv39VaVpnMask) * kSv39PteSizeBytes;
+	uint64_t pte1 = *(uint64_t *)pte1_addr;
+
+	//if megapage
+	if (pte1 & kSvCommonPteXWRMask)
+	{
+		//if megapage: i = 1, LEVELS = 3
+		//pa.ppn[i − 1 : 0] = va.vpn[i − 1 : 0]
+		//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i]
+
+		//if valid, set A
+		if (pte1 & kSvCommonPteVMask)
+		{
+			pte1 |= kSvCommonPteAMask;
+			//and write back
+			*(uint64_t *)pte1_addr = pte1;
+		}
+
+		//check valid and permissions
+		bool valid = (pte1 & kSvCommonPteVMask) ? true : false;
+		if (execute && ((pte1 & kSvCommonPteXMask) == 0))
+			valid = false;
+		if (write && ((pte1 & kSvCommonPteWMask) == 0))
+			valid = false;
+		if (read && ((pte1 & kSvCommonPteRMask) == 0))
+			valid = false;
+
+		//ppn2 | ppn1 | vpn0 | offset
+		*pPa = ((((pte1 >> kSv39PtePpn1Shift) << kSv39VaVpnWidth)			//ppn2, ppn1
+				| (va_vpn & kSv39VaVpnMask)) << kSvCommonVaPageWidth)		//vpn0
+				| (va & kSvCommonVaPageMask);								//offset
+		return valid;
+	}
+
+	//leaf node
+	//PTE at address pte.ppn × PAGESIZE + va.vpn[0] × PTESIZE
+	uint64_t pte1_ppn_4k = (pte1 >> kSv39PtePpn0Shift) << kSvCommonVaPageWidth;
+	uint64_t pte0_addr = pte1_ppn_4k + (va_vpn & kSv39VaVpnMask) * kSv39PteSizeBytes;
+	uint64_t pte0 = *(uint64_t *)pte0_addr;
+
+	//check permissions
+	bool valid = (pte0 & kSvCommonPteVMask) ? true : false;
+	if (execute && ((pte0 & kSvCommonPteXMask) == 0))
+		valid = false;
+	if (write && ((pte0 & kSvCommonPteWMask) == 0))
+		valid = false;
+	if (read && ((pte0 & kSvCommonPteRMask) == 0))
+		valid = false;
+
+	//if valid, set A
+	if (pte0 & kSvCommonPteVMask)
+	{
+		pte0 |= kSvCommonPteAMask;
+		//and write back
+		*(uint64_t *)pte0_addr = pte0;
+	}
+
+	//i = 0
+	//pa.ppn[LEVELS − 1 : i] = pte.ppn[LEVELS − 1 : i].
+	*pPa = ((pte0 >> kSv32PtePpn0Shift) << kSvCommonVaPageWidth) | (va & kSvCommonVaPageMask);
+
+	return valid;
 }
 
 void handle_tlb_miss_sv39(bool data_or_insn, unsigned long tval)
@@ -832,33 +940,33 @@ unsigned int _m_udivsi3(unsigned int a, unsigned int b);
 int _m_umodsi3(int a, int b);
 unsigned int _m_modsi3(unsigned int a, unsigned int b);
 
-static uint32_t amo_add(uint32_t original, uint32_t incoming)
+static unsigned long amo_add(unsigned long original, unsigned long incoming)
 {
 	return original + incoming;
 }
 
-static uint32_t amo_and(uint32_t original, uint32_t incoming)
+static unsigned long amo_and(unsigned long original, unsigned long incoming)
 {
 	return original & incoming;
 }
 
-static uint32_t amo_swap(uint32_t original, uint32_t incoming)
+static unsigned long amo_swap(unsigned long original, unsigned long incoming)
 {
 	return incoming;
 }
 
-static uint32_t amo_or(uint32_t original, uint32_t incoming)
+static unsigned long amo_or(unsigned long original, unsigned long incoming)
 {
 	return original | incoming;
 }
 
-static uint32_t amo_xor(uint32_t original, uint32_t incoming)
+static unsigned long amo_xor(unsigned long original, unsigned long incoming)
 {
 	return original ^ incoming;
 }
 
-static bool amo_op32(unsigned long *pRegs, unsigned int rd, unsigned int rs1, unsigned int rs2,
-	uint32_t (*op)(uint32_t, uint32_t))
+static bool amo_op(unsigned long *pRegs, unsigned int rd, unsigned int rs1, unsigned int rs2,
+	unsigned long (*op)(unsigned long, unsigned long), unsigned int size)
 {
 	uintptr_t pa;
 	//read and write
@@ -866,10 +974,33 @@ static bool amo_op32(unsigned long *pRegs, unsigned int rd, unsigned int rs1, un
 
 	if (success)
 	{
-		uint32_t original_value = *(uint32_t *)pa;
-		uint32_t new_value = op(original_value, get_reg(pRegs, rs2));
-		set_reg_full(pRegs, rd, original_value);
-		*(uint32_t *)pa = new_value;
+		if (size == 2)		//32-bit
+		{
+			/* when run on 32-bit
+			load a 32-bit value, op takes ulong (32-bit), get_reg returns 32-bit
+			result is 32-bit
+			set_reg32 sets a 32-bit value
+
+			when run on 64-bit
+			load a 32-bit value (zero-extend to 64-bit), op takes 64-bit, get_reg returns 64-bit
+			result is 64-bit, but truncated to 32-bit
+			set_reg32 sign-extends the truncated 32-bit result to 64-bit
+			*/
+			uint32_t original_value = *(uint32_t *)pa;
+			uint32_t new_value = op(original_value, get_reg(pRegs, rs2));
+			set_reg32(pRegs, rd, original_value);
+			*(uint32_t *)pa = new_value;
+		}
+		//rv64-only encoding
+#ifdef CONFIG_64BIT
+		else				//64-bit
+		{
+			uint64_t original_value = *(uint64_t *)pa;
+			uint64_t new_value = op(original_value, get_reg(pRegs, rs2));
+			set_reg_full(pRegs, rd, original_value);
+			*(uint64_t *)pa = new_value;
+		}
+#endif
 
 		return true;
 	}
@@ -894,7 +1025,6 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 		//exception
 		switch (cause & 31)
 		{
-#if 1
 			case TrapIllegalIns:
 			{
 				bool fall_through = true;
@@ -902,10 +1032,74 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 				unsigned int opcode = tval & 127;
 				switch (opcode)
 				{
+#ifdef CONFIG_64BIT
+					//op-32
+					case 0b0111011:
+					{
+						unsigned int rd = (tval >> 7) & 31;
+						unsigned int funct3 = (tval >> 12) & 7;
+						unsigned int rs1 = (tval >> 15) & 31;
+						unsigned int rs2 = (tval >> 20) & 31;
+						unsigned int funct7 = tval >> 25;
+
+						switch (funct7)
+						{
+							//muldiv
+							case 0b0000001:
+							{
+								uint32_t rs1_32 = get_reg(pRegs, rs1) & 0xffffffff;
+								uint32_t rs2_32 = get_reg(pRegs, rs2) & 0xffffffff;
+
+								int s_rs1 = rs1_32;
+								int s_rs2 = rs2_32;
+
+								unsigned int u_rs1 = rs1_32;
+								unsigned int u_rs2 = rs2_32;
+
+								//outputs are sign-extended to 64-bit
+
+								switch (funct3)
+								{
+									//divw
+									case 0b100:
+									{
+										set_reg32(pRegs, rd, _m_divdi3(s_rs1, s_rs2));
+										fall_through = false;
+										break;
+									}
+									//divuw
+									case 0b101:
+									{
+										set_reg32(pRegs, rd, _m_udivdi3(u_rs1, u_rs2));
+										fall_through = false;
+										break;
+									}
+									//remw
+									case 0b110:
+									{
+										set_reg32(pRegs, rd, _m_moddi3(s_rs1, s_rs2));
+										fall_through = false;
+										break;
+									}
+									//remuw
+									case 0b111:
+									{
+										set_reg32(pRegs, rd, _m_umoddi3(u_rs1, u_rs2));
+										fall_through = false;
+										break;
+									}
+									default:
+										break;	//did not match the instruction
+								}
+							}
+							default:
+								break;		//did not decode this major class
+						}
+						break;				//break from op
+					}
+#endif
 					//op
 					case 0b0110011:
-					// //op-32
-					// case 0b0111011:
 					{
 						unsigned int rd = (tval >> 7) & 31;
 						unsigned int funct3 = (tval >> 12) & 7;
@@ -923,28 +1117,28 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 									//div
 									case 0b100:
 									{
-										set_reg32(pRegs, rd, _m_divdi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
+										set_reg_full(pRegs, rd, _m_divdi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
 										fall_through = false;
 										break;
 									}
 									//divu
 									case 0b101:
 									{
-										set_reg32(pRegs, rd, _m_udivdi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
+										set_reg_full(pRegs, rd, _m_udivdi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
 										fall_through = false;
 										break;
 									}
 									//rem
 									case 0b110:
 									{
-										set_reg32(pRegs, rd, _m_moddi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
+										set_reg_full(pRegs, rd, _m_moddi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
 										fall_through = false;
 										break;
 									}
 									//remu
 									case 0b111:
 									{
-										set_reg32(pRegs, rd, _m_umoddi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
+										set_reg_full(pRegs, rd, _m_umoddi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
 										fall_through = false;
 										break;
 									}
@@ -974,7 +1168,7 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 							//AMOSWAP.W
 							case 0b00001:
 							{
-								if (amo_op32(pRegs, rd, rs1, rs2, &amo_swap))
+								if (amo_op(pRegs, rd, rs1, rs2, &amo_swap, funct3))
 									fall_through = false;
 
 								break;		//break from this instruction
@@ -982,7 +1176,7 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 							//AMOADD.W
 							case 0b00000:
 							{
-								if (amo_op32(pRegs, rd, rs1, rs2, &amo_add))
+								if (amo_op(pRegs, rd, rs1, rs2, &amo_add, funct3))
 									fall_through = false;
 
 								break;		//break from this instruction
@@ -990,7 +1184,7 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 							//AMOXOR.W
 							case 0b00100:
 							{
-								if (amo_op32(pRegs, rd, rs1, rs2, &amo_xor))
+								if (amo_op(pRegs, rd, rs1, rs2, &amo_xor, funct3))
 									fall_through = false;
 
 								break;		//break from this instruction
@@ -998,7 +1192,7 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 							//AMOAND.W
 							case 0b01100:
 							{
-								if (amo_op32(pRegs, rd, rs1, rs2, &amo_and))
+								if (amo_op(pRegs, rd, rs1, rs2, &amo_and, funct3))
 									fall_through = false;
 
 								break;		//break from this instruction
@@ -1006,12 +1200,12 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 							//AMOOR.W
 							case 0b01000:
 							{
-								if (amo_op32(pRegs, rd, rs1, rs2, &amo_or))
+								if (amo_op(pRegs, rd, rs1, rs2, &amo_or, funct3))
 									fall_through = false;
 
 								break;		//break from this instruction
 							}
-							//LR.W
+							//LR.W/D
 							case 0b00010:
 							{
 								uintptr_t pa;
@@ -1020,7 +1214,25 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 
 								if (success)
 								{
-									set_reg_full(pRegs, rd, *(uint32_t *)pa);
+									if (funct3 == 2)		//32-bit
+									{
+										/* on 32-bit
+										load the 32-bit value
+										set_reg32 takes 32-bit input
+
+										on 64-bit
+										load the 32-bit value
+										set_reg32 takes 32-bit input
+										sign-extends to 64-bit
+										*/
+										set_reg32(pRegs, rd, *(uint32_t *)pa);
+									}
+#ifdef CONFIG_64BIT
+									else					//64-bit
+									{
+										set_reg_full(pRegs, rd, *(uint64_t *)pa);
+									}
+#endif
 									reservation_addr_pa = pa;
 
 									fall_through = false;
@@ -1035,7 +1247,7 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 								}
 								break;		//break from this instruction
 							}
-							//SC.W
+							//SC.W/D
 							case 0b00011:
 							{
 								uintptr_t pa;
@@ -1055,7 +1267,17 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 									if (pa == reservation_addr_pa)
 									{
 										//success
-										*(uint32_t *)pa = get_reg(pRegs, rs2);
+										if (funct3 == 2)		//32-bit
+										{
+											*(uint32_t *)pa = get_reg(pRegs, rs2);
+										}
+#ifdef CONFIG_64BIT
+										else					//64-bit
+										{
+											*(uint64_t *)pa = get_reg(pRegs, rs2);
+										}
+#endif
+
 										set_reg_full(pRegs, rd, 0);
 									}
 									else	//failure
@@ -1092,7 +1314,6 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 					break;
 				}
 			} /* fall through */
-#endif
 			case TrapInsAddrMisaligned:
 			case TrapInsAccFault:
 			case TrapBreakpoint:
@@ -1152,11 +1373,54 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 					{
 						switch (get_reg(pRegs, 16) & 0xffffffff)
 						{
-							//get spec version
+							//Function: Get SBI specification version (FID #0)
 							case 0x0:
 							{
 								set_reg_full(pRegs, 10, 0);		//SBI_SUCCESS
 								set_reg_full(pRegs, 11, (0 << 24) | 2);
+								break;
+							}
+							//Function: Get SBI implementation ID (FID #1)
+							case 0x1:
+							{
+								set_reg_full(pRegs, 10, 0);		//SBI_SUCCESS
+								set_reg_full(pRegs, 11, 0xbeefcafe);
+								break;
+							}
+							//Function: Get SBI implementation version (FID #2)
+							case 0x2:
+							{
+								set_reg_full(pRegs, 10, 0);		//SBI_SUCCESS
+								set_reg_full(pRegs, 11, 1);
+								break;
+							}
+							//Function: Probe SBI extension (FID #3)
+							case 0x3:
+							{
+								set_reg_full(pRegs, 10, 0);		//SBI_SUCCESS
+								set_reg_full(pRegs, 11, 0);		//extension not supported
+								break;
+							}
+							//todo replace these with csr reads
+							//Function: Get machine vendor ID (FID #4)
+							case 0x4:
+							{
+								set_reg_full(pRegs, 10, 0);		//SBI_SUCCESS
+								set_reg_full(pRegs, 11, 0);		//non-commercial implementation
+								break;
+							}
+							//Function: Get machine architecture ID (FID #5)
+							case 0x5:
+							{
+								set_reg_full(pRegs, 10, 0);		//SBI_SUCCESS
+								set_reg_full(pRegs, 11, 0);		//non-commercial implementation
+								break;
+							}
+							//Function: Get machine implementation ID (FID #6)
+							case 0x6:
+							{
+								set_reg_full(pRegs, 10, 0);		//SBI_SUCCESS
+								set_reg_full(pRegs, 11, 0);
 								break;
 							}
 							default:
