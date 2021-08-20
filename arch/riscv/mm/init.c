@@ -1032,6 +1032,44 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 				unsigned int opcode = tval & 127;
 				switch (opcode)
 				{
+					//system
+					case 0b1110011:
+					{
+						unsigned int rd = (tval >> 7) & 31;
+						unsigned int funct3 = (tval >> 12) & 7;
+						unsigned int csr = tval >> 20;
+
+						unsigned long rd_value = 0;
+
+						//csrrs
+						if (funct3 == 0b010)
+						{
+							switch (csr)
+							{
+								//time
+								case 0xC01:
+								{
+									volatile unsigned int *pTime = (volatile unsigned int *)0x1000600;
+									rd_value = *pTime;
+									fall_through = false;
+									break;
+								}
+#ifdef CONFIG_32BIT
+								//timer is only 32 bits wide
+								case 0xC81:
+									rd_value = 0;
+									fall_through = false;
+									break;
+#endif
+								default:
+									break;
+							}
+						}
+
+						if (!fall_through)
+							set_reg_full(pRegs, rd, rd_value);
+						break;
+					}
 #ifdef CONFIG_64BIT
 					//op-32
 					case 0b0111011:
@@ -1402,6 +1440,7 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 								break;
 							}
 							//todo replace these with csr reads
+							//though in retrospect why bother
 							//Function: Get machine vendor ID (FID #4)
 							case 0x4:
 							{

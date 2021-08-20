@@ -55,7 +55,7 @@ static u64 notrace riscv_sched_clock(void)
 static struct clocksource riscv_clocksource = {
 	.name		= "riscv_clocksource",
 	.rating		= 300,
-	.mask		= CLOCKSOURCE_MASK(64),
+	.mask		= CLOCKSOURCE_MASK(32),
 	.flags		= CLOCK_SOURCE_IS_CONTINUOUS,
 	.read		= riscv_clocksource_rdtime,
 };
@@ -140,7 +140,7 @@ static int __init riscv_timer_init_dt(struct device_node *n)
 		return error;
 	}
 
-	sched_clock_register(riscv_sched_clock, 64, riscv_timebase);
+	sched_clock_register(riscv_sched_clock, 32, riscv_timebase);
 
 	error = request_percpu_irq(riscv_clock_event_irq,
 				    riscv_timer_interrupt,
