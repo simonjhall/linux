@@ -371,7 +371,7 @@ static uintptr_t __init best_map_size(phys_addr_t base, phys_addr_t size)
 #error "setup_vm() is called from head.S before relocate so it should not use absolute addressing."
 #endif
 
-enum TrapCause
+enum TrapNonInterruptCause
 {
 	TrapInsAddrMisaligned	=	0,
 	TrapInsAccFault			=	1,
@@ -392,10 +392,24 @@ enum TrapCause
 	TrapDataTlbMiss			=	25,
 };
 
+enum TrapInterruptCause
+{
+	TrapSSoftInt			=	1,
+	TrapMSoftInt			=	3,
+	TrapSTimerInt			=	5,
+	TrapMTimerInt			=	7,
+	TrapSExtInt				=	9,
+	TrapMExtInt				=	11,
+};
+
 #ifdef CONFIG_32BIT
 static const uint64_t kMcauseInterrupt = 1 << 31;
+static const uint64_t kMcauseNotInterrupt = 0 << 31;
+static const uint64_t kMcauseInterruptMask = 1 << 31;
 #else
 static const uint64_t kMcauseInterrupt = 1ull << 63;
+static const uint64_t kMcauseNotInterrupt = 0ull << 63;
+static const uint64_t kMcauseInterruptMask = 1ull << 63;
 #endif
 //////////////////////
 
@@ -1008,11 +1022,48 @@ static bool amo_op(unsigned long *pRegs, unsigned int rd, unsigned int rs1, unsi
 	{
 		//store page fault at va
 		csr_write(CSR_MTVAL, get_reg(pRegs, rs1));
-		csr_write(CSR_MCAUSE, kMcauseInterrupt | TrapStorePageFault);
+		csr_write(CSR_MCAUSE, kMcauseNotInterrupt | TrapStorePageFault);
 
 		//now fall through out of TrapIllegalIns
 		return false;
 	}
+}
+
+static void delegate_to_super(void)
+{
+	//delegated to supervisor mode
+	//manually perform a trap with the help of mret
+	unsigned long mstatus = csr_read(CSR_MSTATUS);
+	unsigned long mstatus_mpp = (mstatus >> 11) & 3;	//previous mode before machine mode trap
+	unsigned long mstatus_sie = (mstatus >> 1) & 1;		//current sie
+
+	// spie <= sie
+	mstatus = mstatus & ~(1 << 5);					//clear spie
+	mstatus = mstatus | (mstatus_sie << 5);			//set spie
+
+	// sie <= 0
+	mstatus = mstatus & ~(1 << 1);					//clear sie
+
+	// spp <= previous mode
+	mstatus = mstatus & ~(1 << 8);					//clear spp
+	mstatus = mstatus | ((mstatus_mpp & 1) << 8);	//set spp based on previous mode
+
+	mstatus = mstatus & ~(3 << 11);					//clear mpp
+	mstatus = mstatus | (1 << 11);					//set supervisor mode to return to
+
+	csr_write(CSR_MSTATUS, mstatus);
+
+	// sepc <= pc
+	csr_write(CSR_SEPC, csr_read(CSR_MEPC));
+
+	// pc <= stvec
+	csr_write(CSR_MEPC, csr_read(CSR_STVEC));		//the address we want to return to
+
+	// stval <= failing access VA / zero
+	csr_write(CSR_STVAL, csr_read(CSR_MTVAL));
+
+	// scause <= {interrupt ? 1 :0, code}
+	csr_write(CSR_SCAUSE, csr_read(CSR_MCAUSE));
 }
 
 asmlinkage void _m_exception_c(unsigned long *pRegs)
@@ -1020,7 +1071,7 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 	unsigned long cause = csr_read(CSR_MCAUSE);
 	unsigned long tval = csr_read(CSR_MTVAL);
 
-	if (cause & kMcauseInterrupt)
+	if ((cause & kMcauseInterruptMask) == kMcauseNotInterrupt)
 	{
 		//exception
 		switch (cause & 31)
@@ -1279,7 +1330,7 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 								{
 									//load page fault at va
 									csr_write(CSR_MTVAL, get_reg(pRegs, rs1));
-									csr_write(CSR_MCAUSE, kMcauseInterrupt | TrapLoadPageFault);
+									csr_write(CSR_MCAUSE, kMcauseNotInterrupt | TrapLoadPageFault);
 
 									//now fall through out of TrapIllegalIns
 								}
@@ -1330,7 +1381,7 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 								{
 									//store page fault at va
 									csr_write(CSR_MTVAL, get_reg(pRegs, rs1));
-									csr_write(CSR_MCAUSE, kMcauseInterrupt | TrapStorePageFault);
+									csr_write(CSR_MCAUSE, kMcauseNotInterrupt | TrapStorePageFault);
 
 									//now fall through out of TrapIllegalIns
 								}
@@ -1365,50 +1416,20 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 			case TrapStorePageFault:
 			default:
 			{
-				//delegated to supervisor mode
-				//manually perform a trap with the help of mret
-				unsigned long mstatus = csr_read(CSR_MSTATUS);
-				unsigned long mstatus_mpp = (mstatus >> 11) & 3;	//previous mode before machine mode trap
-				unsigned long mstatus_sie = (mstatus >> 1) & 1;		//current sie
-
-				// spie <= sie
-				mstatus = mstatus & ~(1 << 5);					//clear spie
-				mstatus = mstatus | (mstatus_sie << 5);			//set spie
-
-				// sie <= 0
-				mstatus = mstatus & ~(1 << 1);					//clear sie
-
-				// spp <= previous mode
-				mstatus = mstatus & ~(1 << 8);					//clear spp
-				mstatus = mstatus | ((mstatus_mpp & 1) << 8);	//set spp based on previous mode
-
-				mstatus = mstatus & ~(3 << 11);					//clear mpp
-				mstatus = mstatus | (1 << 11);					//set supervisor mode to return to
-
-				csr_write(CSR_MSTATUS, mstatus);
-
-				// sepc <= pc
-				csr_write(CSR_SEPC, csr_read(CSR_MEPC));
-
-				// pc <= stvec
-				csr_write(CSR_MEPC, csr_read(CSR_STVEC));		//the address we want to return to
-
-				// stval <= failing access VA / zero
-				csr_write(CSR_STVAL, csr_read(CSR_MTVAL));
-
-				// scause <= {interrupt ? 1 :0, code}
-				csr_write(CSR_SCAUSE, csr_read(CSR_MCAUSE));
+				delegate_to_super();
 				break;
 			}
 
 			//call from supervisor code
 			case TrapSuperCall:
 			{
+				//eid in a7
 				switch (get_reg(pRegs, 17) & 0xffffffff)
 				{
 					//base extension
 					case 0x10:
 					{
+						//fid in a6
 						switch (get_reg(pRegs, 16) & 0xffffffff)
 						{
 							//Function: Get SBI specification version (FID #0)
@@ -1435,8 +1456,22 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 							//Function: Probe SBI extension (FID #3)
 							case 0x3:
 							{
+								//extension not supported
+								unsigned int support = 0;
+								
+								//a0
+								switch (get_reg(pRegs, 10) & 0xffffffff)
+								{
+									//TIME
+									case 0x54494D45:
+										support = 1;
+										break;
+									default:
+										break;
+								}
+
 								set_reg_full(pRegs, 10, 0);		//SBI_SUCCESS
-								set_reg_full(pRegs, 11, 0);		//extension not supported
+								set_reg_full(pRegs, 11, support);
 								break;
 							}
 							//todo replace these with csr reads
@@ -1467,6 +1502,36 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 								set_reg_full(pRegs, 10, -2);	//SBI_ERR_NOT_SUPPORTED
 								break;
 							}
+						}
+						break;
+					}
+					//Timer Extension (EID #0x54494D45 "TIME")
+					case 0x54494D45:
+					{
+						//fid in a6
+						switch (get_reg(pRegs, 16) & 0xffffffff)
+						{
+							//struct sbiret sbi_set_timer(uint64_t stime_value)
+							case 0:
+							{
+								uint64_t stime_value = 0;
+#ifdef CONFIG_64BIT
+								stime_value = get_reg(pRegs, 10);
+#elif CONFIG_32BIT
+								stime_value = ((uint64_t)get_reg(pRegs, 11) << 32) | get_reg(pRegs, 10);
+#endif
+								//write the low 32 bits of the value
+								volatile unsigned int *pTime = (volatile unsigned int *)0x1000600;
+								*pTime = stime_value;
+
+								csr_set(CSR_MIE, 1 << 7);		//mtie
+
+								set_reg_full(pRegs, 10, 0);		//SBI_SUCCESS
+								break;
+							}
+							default:
+								set_reg_full(pRegs, 10, -2);		//SBI_ERR_NOT_SUPPORTED
+								break;
 						}
 						break;
 					}
@@ -1502,6 +1567,23 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 	else
 	{
 		//interrupt
+		switch (cause & 31)
+		{
+			case TrapMTimerInt:
+			{
+				volatile unsigned int *pTime = (volatile unsigned int *)0x1000600;
+				//clear timecmp to unset mtip
+				*pTime = -1;
+
+				delegate_to_super();
+
+				//but replace the cause with super timer
+				csr_write(CSR_SCAUSE, kMcauseInterrupt | TrapSTimerInt);
+				break;
+			}
+			default:
+				break;
+		}
 	}
 }
 
