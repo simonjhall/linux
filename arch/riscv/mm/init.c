@@ -477,6 +477,81 @@ uint32_t tlb_entry;				//rolling index of tlb index
 
 //////////////////////
 
+#define ILL_COUNT
+
+#ifdef ILL_COUNT
+#define ILL_INC(x) ((x)++)
+
+//debug counters
+static unsigned int ill_system_csrrs = 0;
+static unsigned int ill_op32_divw = 0;
+static unsigned int ill_op32_divuw = 0;
+static unsigned int ill_op32_remw = 0;
+static unsigned int ill_op32_remuw = 0;
+static unsigned int ill_op_div = 0;
+static unsigned int ill_op_divu = 0;
+static unsigned int ill_op_rem = 0;
+static unsigned int ill_op_remu = 0;
+static unsigned int ill_amo_amoswap = 0;
+static unsigned int ill_amo_amoadd = 0;
+static unsigned int ill_amo_amoxor = 0;
+static unsigned int ill_amo_amoand = 0;
+static unsigned int ill_amo_amoor = 0;
+static unsigned int ill_amo_lr = 0;
+static unsigned int ill_amo_sc = 0;
+
+#else
+#define ILL_INC(x)
+#endif
+
+static unsigned int ecall = 0;
+
+//////////////////////
+
+#if defined CONFIG_VM68K || defined CONFIG_SOC_VMRISCV
+#define UART_DATA_OFFSET 0x580
+#define UART_STATUS_OFFSET 0x584
+#endif
+
+//UART 1
+#if defined CONFIG_REDUX || defined CONFIG_SOC_REDUX
+#define UART_DATA_OFFSET 0x588
+#define UART_STATUS_OFFSET 0x58C
+#endif
+
+static void ft245_put_char(char c)
+{
+	volatile char *pData = (volatile char *)(0x1000000 + UART_DATA_OFFSET);
+	volatile char *pState = (volatile char *)(0x1000000 + UART_STATUS_OFFSET);
+
+	while (*pState & (1 << 3))			//no space
+		;
+		
+	*pData = c;
+}
+
+static void ft245_put_string(const char *pString)
+{
+	while (*pString)
+		ft245_put_char(*pString++);
+}
+
+static void ft245_put_hex_num(unsigned int n)
+{
+	int count;
+	for (count = 7; count >= 0; count--)
+	{
+		unsigned int val = (n >> (count * 4)) & 0xf;
+		if (val < 10)
+			ft245_put_char('0' + val);
+		else
+			ft245_put_char('a' + val - 10);
+	}
+}
+
+
+//////////////////////
+
 asmlinkage void _m_write_tlb(uint32_t id, uint32_t entry, unsigned long vpn, unsigned long ppn, uint32_t daguxwrv, uint32_t size)
 {
 	const unsigned int kTlbEntriesBits = 2;
@@ -1095,6 +1170,8 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 						//csrrs
 						if (funct3 == 0b010)
 						{
+							ILL_INC(ill_system_csrrs);
+
 							switch (csr)
 							{
 								//time
@@ -1152,6 +1229,7 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 									//divw
 									case 0b100:
 									{
+										ILL_INC(ill_op32_divw);
 										set_reg32(pRegs, rd, _m_divdi3(s_rs1, s_rs2));
 										fall_through = false;
 										break;
@@ -1159,6 +1237,7 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 									//divuw
 									case 0b101:
 									{
+										ILL_INC(ill_op32_divuw);
 										set_reg32(pRegs, rd, _m_udivdi3(u_rs1, u_rs2));
 										fall_through = false;
 										break;
@@ -1166,6 +1245,7 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 									//remw
 									case 0b110:
 									{
+										ILL_INC(ill_op32_rew);
 										set_reg32(pRegs, rd, _m_moddi3(s_rs1, s_rs2));
 										fall_through = false;
 										break;
@@ -1173,6 +1253,7 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 									//remuw
 									case 0b111:
 									{
+										ILL_INC(ill_op32_remuw);
 										set_reg32(pRegs, rd, _m_umoddi3(u_rs1, u_rs2));
 										fall_through = false;
 										break;
@@ -1206,6 +1287,7 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 									//div
 									case 0b100:
 									{
+										ILL_INC(ill_op_div);
 										set_reg_full(pRegs, rd, _m_divdi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
 										fall_through = false;
 										break;
@@ -1213,6 +1295,7 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 									//divu
 									case 0b101:
 									{
+										ILL_INC(ill_op_divu);
 										set_reg_full(pRegs, rd, _m_udivdi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
 										fall_through = false;
 										break;
@@ -1220,6 +1303,7 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 									//rem
 									case 0b110:
 									{
+										ILL_INC(ill_op_rem);
 										set_reg_full(pRegs, rd, _m_moddi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
 										fall_through = false;
 										break;
@@ -1227,6 +1311,7 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 									//remu
 									case 0b111:
 									{
+										ILL_INC(ill_op_remu);
 										set_reg_full(pRegs, rd, _m_umoddi3(get_reg(pRegs, rs1), get_reg(pRegs, rs2)));
 										fall_through = false;
 										break;
@@ -1254,41 +1339,46 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 						//and the original value in rs2, then store the result back to the address in rs1.	
 						switch (funct5)
 						{
-							//AMOSWAP.W
+							//AMOSWAP.W/D
 							case 0b00001:
 							{
+								ILL_INC(ill_amo_amoswap);
 								if (amo_op(pRegs, rd, rs1, rs2, &amo_swap, funct3))
 									fall_through = false;
 
 								break;		//break from this instruction
 							}
-							//AMOADD.W
+							//AMOADD.W/D
 							case 0b00000:
 							{
+								ILL_INC(ill_amo_amoadd);
 								if (amo_op(pRegs, rd, rs1, rs2, &amo_add, funct3))
 									fall_through = false;
 
 								break;		//break from this instruction
 							}
-							//AMOXOR.W
+							//AMOXOR.W/D
 							case 0b00100:
 							{
+								ILL_INC(ill_amo_amoxor);
 								if (amo_op(pRegs, rd, rs1, rs2, &amo_xor, funct3))
 									fall_through = false;
 
 								break;		//break from this instruction
 							}
-							//AMOAND.W
+							//AMOAND.W/D
 							case 0b01100:
 							{
+								ILL_INC(ill_amo_amoand);
 								if (amo_op(pRegs, rd, rs1, rs2, &amo_and, funct3))
 									fall_through = false;
 
 								break;		//break from this instruction
 							}
-							//AMOOR.W
+							//AMOOR.W/D
 							case 0b01000:
 							{
+								ILL_INC(ill_amo_amoor);
 								if (amo_op(pRegs, rd, rs1, rs2, &amo_or, funct3))
 									fall_through = false;
 
@@ -1297,6 +1387,8 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 							//LR.W/D
 							case 0b00010:
 							{
+								ILL_INC(ill_amo_lr);
+
 								uintptr_t pa;
 								//read only
 								bool success = translate_va_pa(get_reg(pRegs, rs1), false, true, false, &pa);
@@ -1339,6 +1431,8 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 							//SC.W/D
 							case 0b00011:
 							{
+								ILL_INC(ill_amo_sc);
+
 								uintptr_t pa;
 								//write only
 								bool success = translate_va_pa(get_reg(pRegs, rs1), false, false, true, &pa);
@@ -1423,6 +1517,31 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 			//call from supervisor code
 			case TrapSuperCall:
 			{
+				ecall++;
+
+#ifdef ILL_COUNT
+				if ((ecall & 127) == 0)
+				{
+					ft245_put_string("ILLEGAL INS DUMP");
+					ft245_put_string("\nsystem_csrrs "); ft245_put_hex_num(ill_system_csrrs);
+					ft245_put_string("\nop32_divw "); ft245_put_hex_num(ill_op32_divw);
+					ft245_put_string("\nop32_divuw "); ft245_put_hex_num(ill_op32_divuw);
+					ft245_put_string("\nop32_remw "); ft245_put_hex_num(ill_op32_remw);
+					ft245_put_string("\nop32_remuw "); ft245_put_hex_num(ill_op32_remuw);
+					ft245_put_string("\nop_div "); ft245_put_hex_num(ill_op_div);
+					ft245_put_string("\nop_divu "); ft245_put_hex_num(ill_op_divu);
+					ft245_put_string("\nop_rem "); ft245_put_hex_num(ill_op_rem);
+					ft245_put_string("\nop_remu "); ft245_put_hex_num(ill_op_remu);
+					ft245_put_string("\namo_amoswap "); ft245_put_hex_num(ill_amo_amoswap);
+					ft245_put_string("\namo_amoadd "); ft245_put_hex_num(ill_amo_amoadd);
+					ft245_put_string("\namo_amoxor "); ft245_put_hex_num(ill_amo_amoxor);
+					ft245_put_string("\namo_amoand "); ft245_put_hex_num(ill_amo_amoand);
+					ft245_put_string("\namo_amoor "); ft245_put_hex_num(ill_amo_amoor);
+					ft245_put_string("\namo_lr "); ft245_put_hex_num(ill_amo_lr);
+					ft245_put_string("\namo_sc "); ft245_put_hex_num(ill_amo_sc);
+				}
+#endif
+
 				//eid in a7
 				switch (get_reg(pRegs, 17) & 0xffffffff)
 				{
