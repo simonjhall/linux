@@ -1245,7 +1245,7 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 									//remw
 									case 0b110:
 									{
-										ILL_INC(ill_op32_rew);
+										ILL_INC(ill_op32_remw);
 										set_reg32(pRegs, rd, _m_moddi3(s_rs1, s_rs2));
 										fall_through = false;
 										break;
@@ -1522,7 +1522,7 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 #ifdef ILL_COUNT
 				if ((ecall & 127) == 0)
 				{
-					ft245_put_string("ILLEGAL INS DUMP");
+					ft245_put_string("\nILLEGAL INS DUMP");
 					ft245_put_string("\nsystem_csrrs "); ft245_put_hex_num(ill_system_csrrs);
 					ft245_put_string("\nop32_divw "); ft245_put_hex_num(ill_op32_divw);
 					ft245_put_string("\nop32_divuw "); ft245_put_hex_num(ill_op32_divuw);
