@@ -267,22 +267,68 @@ _m_trap_stack_start:
 _m_trap_stack_end:
 
 .align 2
+	
+_tlb_miss:
+	addi a0, a2, -24
+
+	//a different trap
+	bltz a0, _tlb_miss_return
+
+	//24 or 25 - tlb miss
+	csrr a1, CSR_MTVAL
+
+	call handle_tlb_miss
+
+	//restore
+	REG_L x1, 1*SZREG(tp)
+	REG_L x2, 2*SZREG(tp)
+	REG_L x3, 3*SZREG(tp)
+
+	REG_L x5, 5*SZREG(tp)
+	REG_L x6, 6*SZREG(tp)
+	REG_L x7, 7*SZREG(tp)
+
+	//fp
+	REG_L x8, 8*SZREG(tp)
+
+	REG_L x10, 10*SZREG(tp)
+	REG_L x11, 11*SZREG(tp)
+
+	REG_L x12, 12*SZREG(tp)
+	REG_L x13, 13*SZREG(tp)
+	REG_L x14, 14*SZREG(tp)
+	REG_L x15, 15*SZREG(tp)
+	REG_L x16, 16*SZREG(tp)
+	REG_L x17, 17*SZREG(tp)
+
+	REG_L x28, 28*SZREG(tp)
+	REG_L x29, 29*SZREG(tp)
+	REG_L x30, 30*SZREG(tp)
+	REG_L x31, 31*SZREG(tp)
+
+	csrr tp, CSR_MSCRATCH
+
+	mret
+
 _m_exception:
+	//save tp in scratch
 	csrw CSR_MSCRATCH, tp
 
 	la tp, _m_saved_state
 
+	//save minimum state
+	//caller saved
 	REG_S x1, 1*SZREG(tp)
 	REG_S x2, 2*SZREG(tp)
 	REG_S x3, 3*SZREG(tp)
 
-	REG_S x4, 4*SZREG(tp)
 	REG_S x5, 5*SZREG(tp)
 	REG_S x6, 6*SZREG(tp)
 	REG_S x7, 7*SZREG(tp)
 
+	//x8/fp, not strictly true but we will clobber it
 	REG_S x8, 8*SZREG(tp)
-	REG_S x9, 9*SZREG(tp)
+
 	REG_S x10, 10*SZREG(tp)
 	REG_S x11, 11*SZREG(tp)
 
@@ -290,9 +336,36 @@ _m_exception:
 	REG_S x13, 13*SZREG(tp)
 	REG_S x14, 14*SZREG(tp)
 	REG_S x15, 15*SZREG(tp)
-
 	REG_S x16, 16*SZREG(tp)
 	REG_S x17, 17*SZREG(tp)
+
+	REG_S x28, 28*SZREG(tp)
+	REG_S x29, 29*SZREG(tp)
+	REG_S x30, 30*SZREG(tp)
+	REG_S x31, 31*SZREG(tp)
+
+	//set up stack
+	//sp = x2, fp = x8
+	la sp, _m_trap_stack_end
+	addi sp, sp, -8
+	addi fp, sp, 0
+
+	//check to see if top bit is clear (ie not an interrupt)
+	csrr a2, CSR_MCAUSE
+
+	//try for a tlb miss
+	bgez a2, _tlb_miss
+
+	//regular trap or interrupt
+_tlb_miss_return:
+
+	//save rest of state
+	//callee saved
+	//x4 = tp, which we have clobbered
+	//REG_S x4, 4*SZREG(tp)
+
+	REG_S x9, 9*SZREG(tp)
+	
 	REG_S x18, 18*SZREG(tp)
 	REG_S x19, 19*SZREG(tp)
 
@@ -306,24 +379,18 @@ _m_exception:
 	REG_S x26, 26*SZREG(tp)
 	REG_S x27, 27*SZREG(tp)
 
-	REG_S x28, 28*SZREG(tp)
-	REG_S x29, 29*SZREG(tp)
-	REG_S x30, 30*SZREG(tp)
-	REG_S x31, 31*SZREG(tp)
-
-	la sp, _m_trap_stack_end
-	addi sp, sp, -8
-	addi fp, sp, 0
-
+	//state into a0
 	la a0, _m_saved_state
-
 	call _m_exception_c
 
+	//restore all state
 	REG_L x1, 1*SZREG(tp)
 	REG_L x2, 2*SZREG(tp)
 	REG_L x3, 3*SZREG(tp)
 
-	REG_L x4, 4*SZREG(tp)
+	//x4 = tp, which we have clobbered
+	//REG_L x4, 4*SZREG(tp)
+
 	REG_L x5, 5*SZREG(tp)
 	REG_L x6, 6*SZREG(tp)
 	REG_L x7, 7*SZREG(tp)
@@ -358,7 +425,9 @@ _m_exception:
 	REG_L x30, 30*SZREG(tp)
 	REG_L x31, 31*SZREG(tp)
 
+	//restore tp
 	csrr tp, CSR_MSCRATCH
+	//return to program
 	mret
 
 .align 2
