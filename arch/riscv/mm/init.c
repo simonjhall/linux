@@ -477,7 +477,7 @@ uint32_t tlb_entry;				//rolling index of tlb index
 
 //////////////////////
 
-#define ILL_COUNT
+// #define ILL_COUNT
 
 #ifdef ILL_COUNT
 #define ILL_INC(x) ((x)++)
@@ -1694,10 +1694,16 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 				//clear timecmp to unset mtip
 				*pTime = -1;
 
-				delegate_to_super();
+				//set STIP
+				csr_set(CSR_MIP, 1 << 5);
+				break;
+			}
+			case TrapSTimerInt:
+			{
+				//clear STIP
+				csr_clear(CSR_MIP, 1 << 5);
 
-				//but replace the cause with super timer
-				csr_write(CSR_SCAUSE, kMcauseInterrupt | TrapSTimerInt);
+				delegate_to_super();
 				break;
 			}
 			default:
