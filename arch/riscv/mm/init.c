@@ -536,12 +536,17 @@ static void ft245_put_string(const char *pString)
 		ft245_put_char(*pString++);
 }
 
-static void ft245_put_hex_num(unsigned int n)
+static void ft245_put_hex_num(unsigned long n)
 {
+#ifdef CONFIG_32BIT
+	const int start = 7;
+#elif CONFIG_64BIT
+	const int start = 15;
+#endif
 	int count;
-	for (count = 7; count >= 0; count--)
+	for (count = start; count >= 0; count--)
 	{
-		unsigned int val = (n >> (count * 4)) & 0xf;
+		unsigned long val = (n >> (count * 4)) & 0xf;
 		if (val < 10)
 			ft245_put_char('0' + val);
 		else
@@ -1500,9 +1505,7 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 			case TrapInsAddrMisaligned:
 			case TrapInsAccFault:
 			case TrapBreakpoint:
-			case TrapLoadMisaligned:
 			case TrapLoadFault:
-			case TrapStoreMisaligned:
 			case TrapStoreFault:
 			case TrapUserCall:
 			case TrapInsPageFault:
@@ -1512,6 +1515,248 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 			{
 				delegate_to_super();
 				break;
+			}
+
+			case TrapLoadMisaligned:
+			case TrapStoreMisaligned:
+			{
+				bool fall_through = true;
+				// ft245_put_string("trap misaligned epc ");
+				unsigned long inst_va = csr_read(CSR_MEPC);
+				unsigned long inst_pa;
+
+				// ft245_put_hex_num(inst_va);
+				// ft245_put_string(" ");
+
+				//not sure this can fail
+				translate_va_pa(inst_va, true, false, false, &inst_pa);
+
+				// ft245_put_hex_num(inst_pa);
+				// ft245_put_string(" inst ");
+
+				unsigned int inst = *(unsigned int *)inst_pa;
+
+				// ft245_put_hex_num(inst);
+
+				unsigned int opcode = inst & 127;
+				switch (opcode)
+				{
+					//load
+					case 0b0000011:
+					{
+						unsigned int rd = (inst >> 7) & 31;
+						unsigned int funct3 = (inst >> 12) & 7;
+						unsigned int rs1 = (inst >> 15) & 31;
+						unsigned int imm = inst >> 20;
+
+						union {
+#ifdef CONFIG_64BIT
+							unsigned char rd_value_c[8];
+#elif CONFIG_32BIT
+							unsigned char rd_value_c[4];
+#endif
+							unsigned long rd_value_i;
+						} u;
+						unsigned long va_lo = imm;
+						unsigned long va_hi;
+
+						uintptr_t pa_lo, pa_hi;
+						bool success;
+						unsigned long count;
+
+						// ft245_put_string(" load va ");
+
+						//sign-extend the immediate
+						if (inst >> 31)
+							va_lo |= ((unsigned long)-1) & ~0xffful;
+						
+						//compute the full address
+						//todo we have tval which is epc
+						va_lo += get_reg(pRegs, rs1);
+
+						// ft245_put_hex_num(va_lo);
+
+						//compute last byte
+						va_hi = va_lo + (1 << funct3) - 1;
+
+						// ft245_put_string(" ");
+						// ft245_put_hex_num(va_hi);
+
+						//read lo
+						success = translate_va_pa(va_lo, false, true, false, &pa_lo);
+
+						// if (success)
+						// 	ft245_put_string(" success");
+						// else
+						// 	ft245_put_string(" failure");
+
+						// ft245_put_string(" load pa lo ");
+						// ft245_put_hex_num(pa_lo);
+
+						if (!success)
+						{
+							//load page fault at va_lo
+							csr_write(CSR_MTVAL, va_lo);
+							csr_write(CSR_MCAUSE, kMcauseNotInterrupt | TrapLoadPageFault);
+							// ft245_put_string("\n");
+							break;
+						}
+
+						//read hi
+						success = translate_va_pa(va_hi, false, true, false, &pa_hi);
+
+						// if (success)
+						// 	ft245_put_string(" success");
+						// else
+						// 	ft245_put_string(" failure");
+
+						// ft245_put_string(" load pa hi ");
+						// ft245_put_hex_num(pa_hi);
+
+						if (!success)
+						{
+							//load page fault at va_hi
+							csr_write(CSR_MTVAL, va_hi);
+							csr_write(CSR_MCAUSE, kMcauseNotInterrupt | TrapLoadPageFault);
+							// ft245_put_string("\n");
+							break;
+						}
+
+						fall_through = false;
+						u.rd_value_i = 0;
+
+						//todo optimise
+						for (count = 0; count < (1 << funct3); count++)
+						{
+							uintptr_t pa;
+							translate_va_pa(va_lo + count, false, true, false, &pa);
+
+							u.rd_value_c[count] = *(unsigned char *)pa;
+						}
+
+						// ft245_put_string(" reading ");
+						// ft245_put_hex_num(u.rd_value_i);
+
+						// ft245_put_string("\n");
+
+						set_reg_full(pRegs, rd, u.rd_value_i);
+						break;
+					}
+					//store
+					case 0b0100011:
+					{
+						unsigned int funct3 = (inst >> 12) & 7;
+						unsigned int rs1 = (inst >> 15) & 31;
+						unsigned int rs2 = (inst >> 20) & 31;
+						unsigned int imm = ((inst >> 7) & 31) | (inst >> 25);
+
+						union {
+#ifdef CONFIG_64BIT
+							unsigned char rd_value_c[8];
+#elif CONFIG_32BIT
+							unsigned char rd_value_c[4];
+#endif
+							unsigned long rd_value_i;
+						} u;
+						unsigned long va_lo = imm;
+						unsigned long va_hi;
+
+						uintptr_t pa_lo, pa_hi;
+						bool success;
+						unsigned long count;
+
+						// ft245_put_string(" store va ");
+
+						//sign-extend the immediate
+						if (inst >> 31)
+							va_lo |= ((unsigned long)-1) & ~0xffful;
+						
+						//compute the full address
+						va_lo += get_reg(pRegs, rs1);
+
+						// ft245_put_hex_num(va_lo);
+
+						//compute last byte
+						va_hi = va_lo + (1 << funct3) -1;
+
+						// ft245_put_string(" ");
+						// ft245_put_hex_num(va_hi);
+
+						//write lo
+						success = translate_va_pa(va_lo, false, false, true, &pa_lo);
+
+						// if (success)
+						// 	ft245_put_string(" success");
+						// else
+						// 	ft245_put_string(" failure");
+
+						// ft245_put_string(" store pa lo ");
+						// ft245_put_hex_num(pa_lo);
+
+						if (!success)
+						{
+							//store page fault at va_lo
+							csr_write(CSR_MTVAL, va_lo);
+							csr_write(CSR_MCAUSE, kMcauseNotInterrupt | TrapStorePageFault);
+							// ft245_put_string("\n");
+							break;
+						}
+
+						//write hi
+						success = translate_va_pa(va_hi, false, false, true, &pa_hi);
+
+						// if (success)
+						// 	ft245_put_string(" success");
+						// else
+						// 	ft245_put_string(" failure");
+
+						// ft245_put_string(" store pa hi ");
+						// ft245_put_hex_num(pa_hi);
+
+						if (!success)
+						{
+							//store page fault at va_hi
+							csr_write(CSR_MTVAL, va_hi);
+							csr_write(CSR_MCAUSE, kMcauseNotInterrupt | TrapStorePageFault);
+							// ft245_put_string("\n");
+							break;
+						}
+
+						fall_through = false;
+						u.rd_value_i = get_reg(pRegs, rs2);
+
+						// ft245_put_string(" writing ");
+						// ft245_put_hex_num(u.rd_value_i);
+
+						// ft245_put_string("\n");
+
+						//todo optimise
+						for (count = 0; count < (1 << funct3); count++)
+						{
+							uintptr_t pa;
+							translate_va_pa(va_lo + count, false, true, false, &pa);
+
+							*(unsigned char *)pa = u.rd_value_c[count];
+						}
+
+						break;
+					}
+					default:
+						//decode failure
+						break;
+				}
+
+				if (!fall_through)
+				{
+					//move to next instruction
+					csr_write(CSR_MEPC, csr_read(CSR_MEPC) + 4);
+					break;
+				}
+				else
+				{
+					delegate_to_super();
+					break;
+				}
 			}
 
 			//call from supervisor code
