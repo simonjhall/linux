@@ -1534,7 +1534,17 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 				// ft245_put_hex_num(inst_pa);
 				// ft245_put_string(" inst ");
 
-				unsigned int inst = *(unsigned int *)inst_pa;
+				union {
+					unsigned int inst;
+					unsigned char b[4];
+				} i;
+
+				i.b[0] = ((unsigned char *)inst_pa)[0];
+				i.b[1] = ((unsigned char *)inst_pa)[1];
+				i.b[2] = ((unsigned char *)inst_pa)[2];
+				i.b[3] = ((unsigned char *)inst_pa)[3];
+
+				unsigned int inst = i.inst;
 
 				// ft245_put_hex_num(inst);
 
