@@ -1551,6 +1551,20 @@ asmlinkage void _m_exception_c(unsigned long *pRegs)
 				unsigned int opcode = inst & 127;
 				switch (opcode)
 				{
+#define FAKE_FP
+#ifdef FAKE_FP
+					//fp load
+					//fp store
+					case 0b0000111:
+					case 0b0100111:
+					{
+						ft245_put_string("fp load/store misaligned at ");
+						ft245_put_hex_num(inst_va);
+						ft245_put_string("\n");
+						fall_through = false;
+						break;
+					}
+#endif
 					//load
 					case 0b0000011:
 					{
