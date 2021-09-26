@@ -25,16 +25,16 @@ ifeq ($(CONFIG_ARCH_RV64I),y)
 	BITS := 64
 	UTS_MACHINE := riscv64
 
-	KBUILD_CFLAGS += -mabi=lp64
-	KBUILD_AFLAGS += -mabi=lp64
+	KBUILD_CFLAGS += -mabi=lp64d
+	KBUILD_AFLAGS += -mabi=lp64d
 
 	KBUILD_LDFLAGS += -melf64lriscv
 else
 	BITS := 32
 	UTS_MACHINE := riscv32
 
-	KBUILD_CFLAGS += -mabi=ilp32
-	KBUILD_AFLAGS += -mabi=ilp32
+	KBUILD_CFLAGS += -mabi=ilp32d
+	KBUILD_AFLAGS += -mabi=ilp32d
 	KBUILD_LDFLAGS += -melf32lriscv
 endif
 
@@ -43,7 +43,8 @@ riscv-march-$(CONFIG_ARCH_RV32I)	:= rv32ima
 riscv-march-$(CONFIG_ARCH_RV64I)	:= rv64ima
 riscv-march-$(CONFIG_FPU)		:= $(riscv-march-y)fd
 riscv-march-$(CONFIG_RISCV_ISA_C)	:= $(riscv-march-y)c
-KBUILD_CFLAGS += -march=$(subst fd,,$(riscv-march-y))
+# KBUILD_CFLAGS += -march=$(subst fd,,$(riscv-march-y))
+KBUILD_CFLAGS += -march=$(riscv-march-y)
 KBUILD_AFLAGS += -march=$(riscv-march-y)
 
 KBUILD_CFLAGS += -mno-save-restore

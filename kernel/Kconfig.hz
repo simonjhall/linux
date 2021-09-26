@@ -50,7 +50,7 @@ endchoice
 
 config HZ
 	int
-	default 100 if HZ_100
+	default 12 if HZ_100
 	default 250 if HZ_250
 	default 300 if HZ_300
 	default 1000 if HZ_1000
